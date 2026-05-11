@@ -815,7 +815,7 @@ fn color_val(c: &RiftColor) -> String {
     }
 }
 
-fn parse_color(s: &str) -> RiftColor {
+pub fn parse_color(s: &str) -> RiftColor {
     let s = s.trim();
     if s.starts_with('#') {
         RiftColor::Hex(s.to_string())
@@ -1070,4 +1070,349 @@ fn draw_settings_footer(frame: &mut Frame, area: Rect, state: &SettingsState) {
             .alignment(Alignment::Center),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Action, Config, KeyBinding, LayoutMode, ShellMode, theme::BorderStyle};
+    use std::path::PathBuf;
+
+    #[test]
+    fn modal_confirm_constructor() {
+        let m = Modal::confirm("Delete", "Delete 3 items?");
+        assert!(matches!(&m, Modal::Confirm { title, message, selected }
+            if title == "Delete" && message == "Delete 3 items?" && selected == &ConfirmChoice::No));
+    }
+
+    #[test]
+    fn modal_input_constructor() {
+        let m = Modal::input("Rename", "New name:", "old.txt");
+        match &m {
+            Modal::Input { title, prompt, value, cursor } => {
+                assert_eq!(title, "Rename");
+                assert_eq!(prompt, "New name:");
+                assert_eq!(value, "old.txt");
+                assert_eq!(*cursor, 7);
+            }
+            _ => panic!("Expected Input modal"),
+        }
+    }
+
+    #[test]
+    fn modal_input_empty_prefill() {
+        let m = Modal::input("New File", "File name:", "");
+        match &m {
+            Modal::Input { value, cursor, .. } => {
+                assert_eq!(value, "");
+                assert_eq!(*cursor, 0);
+            }
+            _ => panic!("Expected Input modal"),
+        }
+    }
+
+    #[test]
+    fn centered_rect_basic() {
+        let area = Rect { x: 0, y: 0, width: 100, height: 50 };
+        let r = centered_rect(50, 20, area);
+        assert_eq!(r.x, 25);
+        assert_eq!(r.y, 15);
+        assert_eq!(r.width, 50);
+        assert_eq!(r.height, 20);
+    }
+
+    #[test]
+    fn centered_rect_full_width() {
+        let area = Rect { x: 0, y: 0, width: 100, height: 50 };
+        let r = centered_rect(100, 10, area);
+        assert_eq!(r.x, 0);
+        assert_eq!(r.width, 100);
+    }
+
+    #[test]
+    fn centered_rect_taller_than_area() {
+        let area = Rect { x: 0, y: 0, width: 100, height: 10 };
+        let r = centered_rect(50, 20, area);
+        assert_eq!(r.height, 10);
+    }
+
+    #[test]
+    fn centered_rect_with_offset() {
+        let area = Rect { x: 10, y: 10, width: 100, height: 50 };
+        let r = centered_rect(50, 20, area);
+        assert_eq!(r.x, 35);
+        assert_eq!(r.y, 25);
+    }
+
+    #[test]
+    fn settings_state_new() {
+        let config = Config::default();
+        let state = SettingsState::new(config);
+        assert_eq!(state.tab, SettingsTab::General);
+        assert_eq!(state.cursor, 0);
+        assert_eq!(state.scroll, 0);
+        assert!(state.editing.is_none());
+        assert!(state.capturing.is_none());
+        assert!(!state.changed);
+    }
+
+    #[test]
+    fn settings_tab_items_general() {
+        let state = SettingsState::new(Config::default());
+        let items = state.tab_items();
+        assert!(matches!(items[0], TabItem::Setting(SettingId::Layout)));
+        assert_eq!(items.len(), 9);
+    }
+
+    #[test]
+    fn settings_tab_items_theme() {
+        let mut state = SettingsState::new(Config::default());
+        state.tab = SettingsTab::Theme;
+        let items = state.tab_items();
+        assert!(items.len() > 25);
+        assert!(items.iter().any(|i| matches!(i, TabItem::Section(s) if *s == "Colors")));
+        assert!(items.iter().any(|i| matches!(i, TabItem::Section(s) if *s == "Symbols")));
+    }
+
+    #[test]
+    fn settings_tab_items_keymap() {
+        let mut state = SettingsState::new(Config::default());
+        state.tab = SettingsTab::Keymap;
+        let items = state.tab_items();
+        assert!(items.iter().any(|i| matches!(i, TabItem::Setting(SettingId::KeyAction(Action::MoveUp)))));
+        assert!(items.iter().any(|i| matches!(i, TabItem::Setting(SettingId::KeyAction(Action::Quit)))));
+    }
+
+    #[test]
+    fn settings_max_cursor() {
+        let state = SettingsState::new(Config::default());
+        assert!(state.max_cursor() > 0);
+    }
+
+    #[test]
+    fn settings_value_for_layout() {
+        let state = SettingsState::new(Config::default());
+        assert_eq!(state.value_for(&SettingId::Layout), "miller");
+    }
+
+    #[test]
+    fn settings_value_for_show_hidden() {
+        let state = SettingsState::new(Config::default());
+        assert_eq!(state.value_for(&SettingId::ShowHidden), "no");
+    }
+
+    #[test]
+    fn settings_value_for_scroll_threshold() {
+        let state = SettingsState::new(Config::default());
+        assert_eq!(state.value_for(&SettingId::ScrollThreshold), "500");
+    }
+
+    #[test]
+    fn settings_value_for_trash_dir() {
+        let state = SettingsState::new(Config::default());
+        assert_eq!(state.value_for(&SettingId::TrashDir), "none");
+    }
+
+    #[test]
+    fn settings_value_for_color() {
+        let state = SettingsState::new(Config::default());
+        assert_eq!(state.value_for(&SettingId::ColorForeground), "#c0caf5");
+    }
+
+    #[test]
+    fn settings_value_for_symbol() {
+        let state = SettingsState::new(Config::default());
+        assert_eq!(state.value_for(&SettingId::SymbolSelected), "󰄬 ");
+    }
+
+    #[test]
+    fn settings_toggle_bool() {
+        let mut state = SettingsState::new(Config::default());
+        assert!(!state.config.general.show_hidden);
+        state.toggle_bool(&SettingId::ShowHidden);
+        assert!(state.config.general.show_hidden);
+        assert!(state.changed);
+    }
+
+    #[test]
+    fn settings_toggle_bool_twice() {
+        let mut state = SettingsState::new(Config::default());
+        state.toggle_bool(&SettingId::ShowHidden);
+        state.toggle_bool(&SettingId::ShowHidden);
+        assert!(!state.config.general.show_hidden);
+    }
+
+    #[test]
+    fn settings_cycle_layout() {
+        let mut state = SettingsState::new(Config::default());
+        assert_eq!(state.config.general.layout, LayoutMode::Miller);
+        state.cycle_enum(&SettingId::Layout);
+        assert_eq!(state.config.general.layout, LayoutMode::Single);
+        state.cycle_enum(&SettingId::Layout);
+        assert_eq!(state.config.general.layout, LayoutMode::Dual);
+        state.cycle_enum(&SettingId::Layout);
+        assert_eq!(state.config.general.layout, LayoutMode::Miller);
+    }
+
+    #[test]
+    fn settings_cycle_shell_mode() {
+        let mut state = SettingsState::new(Config::default());
+        assert_eq!(state.config.general.shell_mode, ShellMode::Capture);
+        state.cycle_enum(&SettingId::ShellMode);
+        assert_eq!(state.config.general.shell_mode, ShellMode::Takeover);
+        state.cycle_enum(&SettingId::ShellMode);
+        assert_eq!(state.config.general.shell_mode, ShellMode::Capture);
+    }
+
+    #[test]
+    fn settings_cycle_border_style() {
+        let mut state = SettingsState::new(Config::default());
+        assert_eq!(state.config.theme.border_style, BorderStyle::Rounded);
+        state.cycle_enum(&SettingId::BorderStyle);
+        assert_eq!(state.config.theme.border_style, BorderStyle::Double);
+        state.cycle_enum(&SettingId::BorderStyle);
+        assert_eq!(state.config.theme.border_style, BorderStyle::Thick);
+        state.cycle_enum(&SettingId::BorderStyle);
+        assert_eq!(state.config.theme.border_style, BorderStyle::None);
+        state.cycle_enum(&SettingId::BorderStyle);
+        assert_eq!(state.config.theme.border_style, BorderStyle::Plain);
+        state.cycle_enum(&SettingId::BorderStyle);
+        assert_eq!(state.config.theme.border_style, BorderStyle::Rounded);
+    }
+
+    #[test]
+    fn settings_apply_shell_value() {
+        let mut state = SettingsState::new(Config::default());
+        state.apply_value(&SettingId::Shell, "/bin/zsh");
+        assert_eq!(state.config.general.shell, "/bin/zsh");
+    }
+
+    #[test]
+    fn settings_apply_scroll_threshold() {
+        let mut state = SettingsState::new(Config::default());
+        state.apply_value(&SettingId::ScrollThreshold, "1000");
+        assert_eq!(state.config.general.scroll_threshold, 1000);
+    }
+
+    #[test]
+    fn settings_apply_invalid_scroll_threshold() {
+        let mut state = SettingsState::new(Config::default());
+        state.apply_value(&SettingId::ScrollThreshold, "not_a_number");
+        assert_eq!(state.config.general.scroll_threshold, 500);
+    }
+
+    #[test]
+    fn settings_apply_trash_dir() {
+        let mut state = SettingsState::new(Config::default());
+        state.apply_value(&SettingId::TrashDir, "/tmp/trash");
+        assert_eq!(state.config.general.trash_dir, Some(PathBuf::from("/tmp/trash")));
+    }
+
+    #[test]
+    fn settings_apply_trash_dir_clear() {
+        let mut state = SettingsState::new(Config::default());
+        state.config.general.trash_dir = Some(PathBuf::from("/tmp/trash"));
+        state.apply_value(&SettingId::TrashDir, "none");
+        assert_eq!(state.config.general.trash_dir, None);
+    }
+
+    #[test]
+    fn settings_apply_color() {
+        let mut state = SettingsState::new(Config::default());
+        state.apply_value(&SettingId::ColorForeground, "#ff0000");
+        assert!(matches!(&state.config.theme.colors.foreground, super::RiftColor::Hex(s) if s == "#ff0000"));
+    }
+
+    #[test]
+    fn settings_apply_symbol() {
+        let mut state = SettingsState::new(Config::default());
+        state.apply_value(&SettingId::SymbolDirOpen, ">");
+        assert_eq!(state.config.theme.symbols.dir_open, ">");
+    }
+
+    #[test]
+    fn settings_apply_capture_binds_key() {
+        let mut state = SettingsState::new(Config::default());
+        state.capturing = Some(Action::MoveUp);
+        state.apply_capture("ctrl+u");
+        assert!(state.config.keymap.0.contains_key("ctrl+u"));
+        assert!(matches!(
+            state.config.keymap.0.get("ctrl+u"),
+            Some(KeyBinding::Action(Action::MoveUp))
+        ));
+        assert!(state.changed);
+        assert!(state.capturing.is_none());
+    }
+
+    #[test]
+    fn settings_apply_capture_removes_old() {
+        let mut state = SettingsState::new(Config::default());
+        state.capturing = Some(Action::MoveDown);
+        state.apply_capture("alt+j");
+        let moves_down: Vec<&String> = state.config.keymap.0.iter()
+            .filter(|(_, v)| matches!(v, KeyBinding::Action(a) if *a == Action::MoveDown))
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(moves_down.len(), 1, "MoveDown should have exactly 1 binding");
+        assert_eq!(moves_down[0], "alt+j");
+    }
+
+    #[test]
+    fn settings_apply_capture_noop_when_not_capturing() {
+        let mut state = SettingsState::new(Config::default());
+        state.capturing = None;
+        state.apply_capture("ctrl+u");
+        assert!(!state.changed);
+    }
+
+    #[test]
+    fn settings_apply_capture_replaces_existing_key() {
+        let mut state = SettingsState::new(Config::default());
+        state.capturing = Some(Action::MoveUp);
+        state.apply_capture("q");
+        assert!(matches!(
+            state.config.keymap.0.get("q"),
+            Some(KeyBinding::Action(Action::MoveUp))
+        ));
+    }
+
+    #[test]
+    fn yesno_true() {
+        assert_eq!(super::yesno(true), "yes");
+    }
+
+    #[test]
+    fn yesno_false() {
+        assert_eq!(super::yesno(false), "no");
+    }
+
+    #[test]
+    fn color_val_hex() {
+        let c = super::RiftColor::Hex("#c0caf5".into());
+        assert_eq!(super::color_val(&c), "#c0caf5");
+    }
+
+    #[test]
+    fn color_val_named() {
+        let c = super::RiftColor::Named("red".into());
+        assert_eq!(super::color_val(&c), "red");
+    }
+
+    #[test]
+    fn parse_color_with_hash() {
+        let c = super::parse_color("#ff6600");
+        assert!(matches!(c, super::RiftColor::Hex(s) if s == "#ff6600"));
+    }
+
+    #[test]
+    fn parse_color_without_hash() {
+        let c = super::parse_color("ff6600");
+        assert!(matches!(c, super::RiftColor::Hex(s) if s == "#ff6600"));
+    }
+
+    #[test]
+    fn parse_color_named() {
+        let c = super::parse_color("red");
+        assert!(matches!(c, super::RiftColor::Named(s) if s == "red"));
+    }
 }

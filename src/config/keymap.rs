@@ -134,3 +134,76 @@ impl Keymap {
         self.0.get(key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn all_actions() -> Vec<Action> {
+        use Action::*;
+        vec![
+            MoveUp, MoveDown, MoveLeft, MoveRight,
+            PageUp, PageDown, GotoTop, GotoBottom,
+            OpenEntry, GoParent,
+            SelectToggle, SelectAll, SelectNone,
+            Copy, Cut, Paste, Delete, Rename, NewFile, NewDir,
+            ToggleHidden, TogglePreview, CycleLayout, Refresh,
+            Search, Filter, OpenSettings, Quit, Help,
+        ]
+    }
+
+    #[test]
+    fn default_keymap_has_all_actions_bound() {
+        let km = Keymap::default();
+        for action in all_actions() {
+            let has = km.0.values().any(|v| matches!(v, KeyBinding::Action(a) if *a == action));
+            assert!(has, "Action {:?} is not bound in default keymap", action);
+        }
+    }
+
+    #[test]
+    fn keymap_get_returns_some_for_bound_key() {
+        let km = Keymap::default();
+        assert!(km.get("j").is_some());
+        assert!(km.get("k").is_some());
+        assert!(km.get("enter").is_some());
+        assert!(km.get("ctrl+c").is_some());
+        assert!(km.get("f2").is_some());
+    }
+
+    #[test]
+    fn keymap_get_returns_none_for_unbound_key() {
+        let km = Keymap::default();
+        assert!(km.get("ctrl+z").is_none());
+        assert!(km.get("x").is_none());
+    }
+
+    #[test]
+    fn keymap_has_shell_bindings() {
+        let km = Keymap::default();
+        let shell_count: usize = km.0.values()
+            .filter(|v| matches!(v, KeyBinding::Shell(_)))
+            .count();
+        assert!(shell_count > 0, "Expected at least one shell binding");
+        assert!(matches!(km.get("ctrl+e"), Some(KeyBinding::Shell(_))));
+        assert!(matches!(km.get("ctrl+t"), Some(KeyBinding::Shell(_))));
+    }
+
+    #[test]
+    fn keymap_get_returns_correct_action() {
+        let km = Keymap::default();
+        assert!(matches!(km.get("j"), Some(KeyBinding::Action(Action::MoveDown))));
+        assert!(matches!(km.get("k"), Some(KeyBinding::Action(Action::MoveUp))));
+        assert!(matches!(km.get("q"), Some(KeyBinding::Action(Action::Quit))));
+        assert!(matches!(km.get("enter"), Some(KeyBinding::Action(Action::OpenEntry))));
+    }
+
+    #[test]
+    fn keymap_action_count() {
+        let km = Keymap::default();
+        let count: usize = km.0.values()
+            .filter(|v| matches!(v, KeyBinding::Action(_)))
+            .count();
+        assert!(count >= 27, "Expected at least 27 action bindings, got {}", count);
+    }
+}

@@ -220,3 +220,270 @@ fn entry_color(e: &Entry, theme: &Theme) -> ratatui::style::Color {
         EntryKind::Special => theme.colors.foreground.to_ratatui(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_entries() -> Vec<Entry> {
+        vec![
+            Entry {
+                path: PathBuf::from("/projects"),
+                name: "projects".into(),
+                kind: EntryKind::Directory,
+                size: None,
+                modified: None,
+                permissions: None,
+                is_hidden: false,
+                is_executable: false,
+                extension: None,
+            },
+            Entry {
+                path: PathBuf::from("/readme.md"),
+                name: "readme.md".into(),
+                kind: EntryKind::File,
+                size: Some(100),
+                modified: None,
+                permissions: None,
+                is_hidden: false,
+                is_executable: false,
+                extension: Some("md".into()),
+            },
+            Entry {
+                path: PathBuf::from("/src"),
+                name: "src".into(),
+                kind: EntryKind::Directory,
+                size: None,
+                modified: None,
+                permissions: None,
+                is_hidden: false,
+                is_executable: false,
+                extension: None,
+            },
+            Entry {
+                path: PathBuf::from("/test.rs"),
+                name: "test.rs".into(),
+                kind: EntryKind::File,
+                size: Some(200),
+                modified: None,
+                permissions: None,
+                is_hidden: false,
+                is_executable: false,
+                extension: Some("rs".into()),
+            },
+        ]
+    }
+
+    #[test]
+    fn pane_new() {
+        let entries = make_entries();
+        let pane = Pane::new(PathBuf::from("/"), entries);
+        assert_eq!(pane.cwd, PathBuf::from("/"));
+        assert_eq!(pane.entries.len(), 4);
+        assert_eq!(pane.cursor, 0);
+        assert!(pane.selected.is_empty());
+        assert!(pane.filter.is_none());
+        assert!(!pane.is_active);
+    }
+
+    #[test]
+    fn visible_entries_no_filter() {
+        let pane = Pane::new(PathBuf::from("/"), make_entries());
+        assert_eq!(pane.visible_entries().len(), 4);
+    }
+
+    #[test]
+    fn visible_entries_with_filter() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.filter = Some("readme".into());
+        assert_eq!(pane.visible_entries().len(), 1);
+        assert_eq!(pane.visible_entries()[0].name, "readme.md");
+    }
+
+    #[test]
+    fn visible_entries_filter_no_match() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.filter = Some("nonexistent".into());
+        assert!(pane.visible_entries().is_empty());
+    }
+
+    #[test]
+    fn focused_entry() {
+        let pane = Pane::new(PathBuf::from("/"), make_entries());
+        assert_eq!(pane.focused_entry().unwrap().name, "projects");
+    }
+
+    #[test]
+    fn focused_entry_empty() {
+        let pane = Pane::new(PathBuf::from("/"), vec![]);
+        assert!(pane.focused_entry().is_none());
+    }
+
+    #[test]
+    fn move_up_stays_at_top() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.move_up();
+        assert_eq!(pane.cursor, 0);
+    }
+
+    #[test]
+    fn move_down_stays_at_bottom() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.cursor = 3;
+        pane.move_down();
+        assert_eq!(pane.cursor, 3);
+    }
+
+    #[test]
+    fn move_up_down() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.move_down();
+        assert_eq!(pane.cursor, 1);
+        pane.move_down();
+        assert_eq!(pane.cursor, 2);
+        pane.move_up();
+        assert_eq!(pane.cursor, 1);
+    }
+
+    #[test]
+    fn goto_top() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.cursor = 2;
+        pane.goto_top();
+        assert_eq!(pane.cursor, 0);
+    }
+
+    #[test]
+    fn goto_bottom() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.goto_bottom();
+        assert_eq!(pane.cursor, 3);
+    }
+
+    #[test]
+    fn goto_bottom_empty() {
+        let mut pane = Pane::new(PathBuf::from("/"), vec![]);
+        pane.goto_bottom();
+        assert_eq!(pane.cursor, 0);
+    }
+
+    #[test]
+    fn page_up_saturates() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.page_up(10);
+        assert_eq!(pane.cursor, 0);
+    }
+
+    #[test]
+    fn page_down_bounded() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.page_down(100);
+        assert_eq!(pane.cursor, 3);
+    }
+
+    #[test]
+    fn page_up_partial() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.cursor = 3;
+        pane.page_up(2);
+        assert_eq!(pane.cursor, 1);
+    }
+
+    #[test]
+    fn page_down_partial() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.page_down(2);
+        assert_eq!(pane.cursor, 2);
+    }
+
+    #[test]
+    fn toggle_selection() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.toggle_selection();
+        assert_eq!(pane.selected.len(), 1);
+        assert!(pane.selected.contains(&PathBuf::from("/projects")));
+        pane.toggle_selection();
+        assert!(pane.selected.is_empty());
+    }
+
+    #[test]
+    fn toggle_selection_no_focused_entry() {
+        let mut pane = Pane::new(PathBuf::from("/"), vec![]);
+        pane.toggle_selection();
+        assert!(pane.selected.is_empty());
+    }
+
+    #[test]
+    fn select_all() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.select_all();
+        assert_eq!(pane.selected.len(), 4);
+    }
+
+    #[test]
+    fn clear_selection() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.select_all();
+        pane.clear_selection();
+        assert!(pane.selected.is_empty());
+    }
+
+    #[test]
+    fn operative_entries_uses_selected_when_present() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.selected.insert(PathBuf::from("/readme.md"));
+        pane.selected.insert(PathBuf::from("/test.rs"));
+        let ops = pane.operative_entries();
+        assert_eq!(ops.len(), 2);
+    }
+
+    #[test]
+    fn operative_entries_uses_focused_when_no_selection() {
+        let pane = Pane::new(PathBuf::from("/"), make_entries());
+        let ops = pane.operative_entries();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0], PathBuf::from("/projects"));
+    }
+
+    #[test]
+    fn operative_entries_empty_when_no_entries() {
+        let pane = Pane::new(PathBuf::from("/"), vec![]);
+        assert!(pane.operative_entries().is_empty());
+    }
+
+    #[test]
+    fn filter_is_case_insensitive() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.filter = Some("README".into());
+        assert_eq!(pane.visible_entries().len(), 1);
+        pane.filter = Some("TEST".into());
+        assert_eq!(pane.visible_entries().len(), 1);
+    }
+
+    #[test]
+    fn filter_partial_match() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.filter = Some("ro".into());
+        assert_eq!(pane.visible_entries().len(), 1);
+        assert_eq!(pane.visible_entries()[0].name, "projects");
+    }
+
+    #[test]
+    fn move_up_down_with_filter() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        pane.filter = Some("src".into());
+        assert_eq!(pane.visible_entries().len(), 1);
+        pane.move_down();
+        assert_eq!(pane.cursor, 0);
+    }
+
+    #[test]
+    fn list_state_updated_on_move() {
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        assert_eq!(pane.list_state.selected(), Some(0));
+        pane.move_down();
+        assert_eq!(pane.list_state.selected(), Some(1));
+        pane.move_up();
+        assert_eq!(pane.list_state.selected(), Some(0));
+    }
+}

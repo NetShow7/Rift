@@ -1001,3 +1001,62 @@ fn auto_rename(path: &std::path::Path) -> String {
         .unwrap_or_default()
         .as_secs(), ext)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::auto_rename;
+    use std::path::Path;
+
+    #[test]
+    fn auto_rename_simple() {
+        let name = auto_rename(Path::new("/tmp/file.txt"));
+        assert_eq!(name, "file_copy.txt");
+    }
+
+    #[test]
+    fn auto_rename_no_extension() {
+        let name = auto_rename(Path::new("/tmp/Makefile"));
+        assert_eq!(name, "Makefile_copy");
+    }
+
+    #[test]
+    fn auto_rename_hidden_file() {
+        let name = auto_rename(Path::new("/tmp/.hidden"));
+        assert_eq!(name, ".hidden_copy");
+    }
+
+    #[test]
+    fn auto_rename_with_existing_copy() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("file.txt");
+        std::fs::write(&p, "").unwrap();
+        let copy1 = dir.path().join("file_copy.txt");
+        std::fs::write(&copy1, "").unwrap();
+        let name = auto_rename(&p);
+        assert_eq!(name, "file_copy_2.txt");
+    }
+
+    #[test]
+    fn auto_rename_multiple_copies() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("file.txt");
+        std::fs::write(&p, "").unwrap();
+        std::fs::write(dir.path().join("file_copy.txt"), "").unwrap();
+        for i in 2..=4 {
+            std::fs::write(dir.path().join(format!("file_copy_{}.txt", i)), "").unwrap();
+        }
+        let name = auto_rename(&p);
+        assert_eq!(name, "file_copy_5.txt");
+    }
+
+    #[test]
+    fn auto_rename_no_extension_with_copy_exists() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("Makefile");
+        std::fs::write(&p, "").unwrap();
+        let copy1 = dir.path().join("Makefile_copy");
+        std::fs::write(&copy1, "").unwrap();
+        let name = auto_rename(&p);
+        assert_eq!(name, "Makefile_copy_2");
+    }
+}

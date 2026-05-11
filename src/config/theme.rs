@@ -53,7 +53,7 @@ fn parse_color(s: &str) -> ratatui::style::Color {
 }
 
 /// Border style for panes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BorderStyle {
     Plain,
@@ -155,4 +155,76 @@ pub struct Theme {
     pub colors:       ThemeColors,
     pub symbols:      ThemeSymbols,
     pub border_style: BorderStyle,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_default_is_reset() {
+        assert!(matches!(Color::default(), Color::Named(s) if s == "reset"));
+    }
+
+    #[test]
+    fn hex_color_to_ratatui() {
+        let c = Color::Hex("#c0caf5".into());
+        assert_eq!(c.to_ratatui(), ratatui::style::Color::Rgb(192, 202, 245));
+    }
+
+    #[test]
+    fn named_color_to_ratatui() {
+        assert_eq!(Color::Named("red".into()).to_ratatui(), ratatui::style::Color::Red);
+        assert_eq!(Color::Named("green".into()).to_ratatui(), ratatui::style::Color::Green);
+        assert_eq!(Color::Named("blue".into()).to_ratatui(), ratatui::style::Color::Blue);
+        assert_eq!(Color::Named("reset".into()).to_ratatui(), ratatui::style::Color::Reset);
+        assert_eq!(Color::Named("black".into()).to_ratatui(), ratatui::style::Color::Black);
+        assert_eq!(Color::Named("white".into()).to_ratatui(), ratatui::style::Color::White);
+    }
+
+    #[test]
+    fn unknown_named_color_falls_back_to_reset() {
+        assert_eq!(
+            Color::Named("burgundy".into()).to_ratatui(),
+            ratatui::style::Color::Reset
+        );
+    }
+
+    #[test]
+    fn border_style_default() {
+        assert_eq!(BorderStyle::default(), BorderStyle::Rounded);
+    }
+
+    #[test]
+    fn theme_colors_default_has_tokyo_night_palette() {
+        let c = ThemeColors::default();
+        assert!(matches!(c.background, Color::Named(s) if s == "reset"));
+        assert!(matches!(c.foreground, Color::Hex(s) if s == "#c0caf5"));
+        assert!(matches!(c.directory, Color::Hex(s) if s == "#7aa2f7"));
+        assert!(matches!(c.error, Color::Hex(s) if s == "#f7768e"));
+    }
+
+    #[test]
+    fn theme_symbols_default() {
+        let s = ThemeSymbols::default();
+        assert_eq!(s.selected, "󰄬 ");
+        assert_eq!(s.unselected, "  ");
+    }
+
+    #[test]
+    fn theme_default_has_rounded_border() {
+        let t = Theme::default();
+        assert_eq!(t.border_style, BorderStyle::Rounded);
+    }
+
+    #[test]
+    fn named_color_gray_and_grey() {
+        assert_eq!(Color::Named("gray".into()).to_ratatui(), ratatui::style::Color::Gray);
+        assert_eq!(Color::Named("grey".into()).to_ratatui(), ratatui::style::Color::Gray);
+    }
+
+    #[test]
+    fn color_case_insensitive() {
+        assert_eq!(Color::Named("RED".into()).to_ratatui(), ratatui::style::Color::Red);
+    }
 }

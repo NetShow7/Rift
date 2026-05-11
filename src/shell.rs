@@ -47,3 +47,45 @@ pub fn run_takeover(shell: &str, cmd: &str, cwd: &Path) -> Result<()> {
         Err(anyhow::anyhow!("Command exited with status: {}", status))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn expand_command_with_focused_path() {
+        let result = expand_command("$EDITOR {}", Some(Path::new("/path/to/file.txt")));
+        assert_eq!(result, "$EDITOR /path/to/file.txt");
+    }
+
+    #[test]
+    fn expand_command_without_focused() {
+        let result = expand_command("$SHELL", None);
+        assert_eq!(result, "$SHELL");
+    }
+
+    #[test]
+    fn expand_command_multiple_placeholders() {
+        let result = expand_command("cp {} {}", Some(Path::new("src.txt")));
+        assert_eq!(result, "cp src.txt src.txt");
+    }
+
+    #[test]
+    fn expand_command_no_placeholder() {
+        let result = expand_command("ls -la", Some(Path::new("/ignored")));
+        assert_eq!(result, "ls -la");
+    }
+
+    #[test]
+    fn expand_command_path_with_spaces() {
+        let result = expand_command("cat {}", Some(Path::new("/path/with spaces/file.txt")));
+        assert_eq!(result, "cat /path/with spaces/file.txt");
+    }
+
+    #[test]
+    fn expand_command_empty_template() {
+        let result = expand_command("", Some(Path::new("/path")));
+        assert_eq!(result, "");
+    }
+}

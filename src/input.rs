@@ -45,3 +45,113 @@ pub fn key_to_string(event: &KeyEvent) -> String {
     parts.push(key_name);
     parts.join("+")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn simple_char() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)), "a");
+    }
+
+    #[test]
+    fn uppercase_char() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE)), "A");
+    }
+
+    #[test]
+    fn ctrl_c() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)), "ctrl+c");
+    }
+
+    #[test]
+    fn alt_x() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)), "alt+x");
+    }
+
+    #[test]
+    fn ctrl_alt_delete() {
+        let e = KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL | KeyModifiers::ALT);
+        assert_eq!(key_to_string(&e), "ctrl+alt+delete");
+    }
+
+    #[test]
+    fn space() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)), "space");
+    }
+
+    #[test]
+    fn enter() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), "enter");
+    }
+
+    #[test]
+    fn backspace() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)), "backspace");
+    }
+
+    #[test]
+    fn escape() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)), "escape");
+    }
+
+    #[test]
+    fn tab() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)), "tab");
+    }
+
+    #[test]
+    fn shift_tab() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE)), "shift+tab");
+    }
+
+    #[test]
+    fn arrow_keys() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)), "up");
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)), "down");
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)), "left");
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)), "right");
+    }
+
+    #[test]
+    fn function_keys() {
+        for n in 1..=12 {
+            assert_eq!(key_to_string(&KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE)), format!("f{}", n));
+        }
+    }
+
+    #[test]
+    fn shift_function_key() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::F(1), KeyModifiers::SHIFT)), "shift+f1");
+    }
+
+    #[test]
+    fn ctrl_function_key() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::F(5), KeyModifiers::CONTROL)), "ctrl+f5");
+    }
+
+    #[test]
+    fn page_keys() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)), "page_up");
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)), "page_down");
+    }
+
+    #[test]
+    fn home_end_insert() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)), "home");
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::End, KeyModifiers::NONE)), "end");
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Insert, KeyModifiers::NONE)), "insert");
+    }
+
+    #[test]
+    fn delete_key() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)), "delete");
+    }
+
+    #[test]
+    fn unknown_key_returns_empty() {
+        assert_eq!(key_to_string(&KeyEvent::new(KeyCode::Null, KeyModifiers::NONE)), "");
+    }
+}
