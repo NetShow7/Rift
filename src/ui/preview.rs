@@ -19,13 +19,47 @@ pub fn draw_preview(frame: &mut Frame, area: Rect, entry: Option<&Entry>) {
     let Some(entry) = entry else { return };
 
     if entry.is_dir() {
-        // Show child count
-        let count = fs::read_dir(&entry.path)
-            .map(|d| d.count())
-            .unwrap_or(0);
+        match fs::read_dir(&entry.path) {
+            Ok(rd) => {
+                let lines: Vec<String> = rd
+                    .filter_map(|r| r.ok())
+                    .take(inner.height as usize)
+                    .map(|de| {
+                        let name = de.file_name().to_string_lossy().to_string();
+                        let is_subdir = de.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        if is_subdir {
+                            format!(" {}/", name)
+                        } else {
+                            format!(" {}", name)
+                        }
+                    })
+                    .collect();
+                let content = if lines.is_empty() {
+                    " (empty)".to_string()
+                } else {
+                    lines.join("\n")
+                };
+                frame.render_widget(
+                    Paragraph::new(content)
+                        .style(Style::default().fg(Color::Rgb(122, 162, 247))),
+                    inner,
+                );
+            }
+            Err(e) => {
+                frame.render_widget(
+                    Paragraph::new(format!("Cannot read: {}", e))
+                        .style(Style::default().fg(Color::Rgb(247, 118, 142))),
+                    inner,
+                );
+            }
+        }
+        return;
+    }
+
+    if !entry.is_previewable() {
         frame.render_widget(
-            Paragraph::new(format!(" {} items", count))
-                .style(Style::default().fg(Color::Rgb(122, 162, 247))),
+            Paragraph::new(" Binary file \u{2014} preview unavailable")
+                .style(Style::default().fg(Color::Rgb(247, 118, 142))),
             inner,
         );
         return;

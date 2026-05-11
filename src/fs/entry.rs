@@ -103,6 +103,42 @@ impl Entry {
             )
         )
     }
+
+    pub fn is_previewable(&self) -> bool {
+        if self.extension.is_none() {
+            return matches!(
+                self.name.as_str(),
+                "Makefile" | "Dockerfile" | "Procfile" | "Justfile"
+            );
+        }
+        matches!(
+            self.extension.as_deref(),
+            Some(
+                // Code
+                "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "go" | "rb" | "java"
+                | "c" | "cpp" | "h" | "hpp" | "cs" | "swift" | "kt" | "scala"
+                | "php" | "pl" | "lua" | "r" | "dart" | "zig" | "clj" | "ex"
+                | "exs" | "erl" | "hs" | "nim" | "odin" | "gleam"
+                // Shell & build
+                | "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd"
+                | "cmake" | "gradle" | "starlark" | "bazel" | "mk"
+                // Config
+                | "toml" | "yaml" | "yml" | "json" | "xml" | "ini" | "cfg"
+                | "conf" | "env" | "editorconfig" | "gitignore" | "gitattributes"
+                | "dockerignore" | "npmrc" | "prettierrc" | "eslintrc"
+                | "hcl" | "terraform" | "lock"
+                // Docs
+                | "md" | "txt" | "rst" | "tex" | "org" | "adoc" | "mdx"
+                // Web
+                | "html" | "htm" | "css" | "scss" | "sass" | "less" | "vue"
+                | "svelte" | "astro" | "liquid" | "ejs" | "hbs"
+                // Other text
+                | "log" | "csv" | "tsv" | "diff" | "patch" | "sql" | "graphql"
+                | "gql" | "proto" | "nix" | "justfile" | "procfile"
+                | "properties" | "desktop" | "service" | "timer"
+            )
+        )
+    }
 }
 
 pub fn read_dir(path: &Path, show_hidden: bool) -> Result<Vec<Entry>> {
