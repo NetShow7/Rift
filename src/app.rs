@@ -355,7 +355,9 @@ impl App {
 
             Action::OpenConfig => {
                 let path = Config::config_path();
-                let cmd = format!("$EDITOR {}", path.display());
+                let path_str = path.to_string_lossy();
+                let quoted = format!("'{}'", path_str.replace('\'', r"'\''"));
+                let cmd = format!("$EDITOR {}", quoted);
                 self.dispatch_shell(&cmd)?;
             }
 
@@ -397,8 +399,7 @@ impl App {
                 self.refresh_primary()?;
             }
             ShellMode::Capture => {
-                let rt = tokio::runtime::Handle::current();
-                let output = rt.block_on(shell::run_capture(&shell_bin, &cmd, &cwd));
+                let output = self.rt.block_on(shell::run_capture(&shell_bin, &cmd, &cwd));
                 let lines = match output {
                     Ok(out) => out.lines().map(|l| l.to_string()).collect(),
                     Err(e)  => vec![format!("Error: {}", e)],
