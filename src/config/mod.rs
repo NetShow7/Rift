@@ -55,7 +55,7 @@ impl Default for GeneralConfig {
             layout: LayoutMode::default(),
             show_hidden: false,
             follow_symlinks: true,
-            scroll_threshold: 500,
+            scroll_threshold: 3,
             shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
             shell_mode: ShellMode::default(),
             confirm_delete: true,
@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(c.layout, LayoutMode::Miller);
         assert!(!c.show_hidden);
         assert!(c.follow_symlinks);
-        assert_eq!(c.scroll_threshold, 500);
+        assert_eq!(c.scroll_threshold, 3);
         assert_eq!(c.shell_mode, ShellMode::Capture);
         assert!(c.confirm_delete);
         assert!(c.show_shortcut_hints);

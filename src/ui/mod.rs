@@ -5,7 +5,7 @@ pub mod preview;
 pub mod statusbar;
 
 pub use layout::{compute_layout, LayoutAreas};
-pub use modal::{draw_modal, ConflictChoice, ConfirmChoice, Modal};
+pub use modal::{draw_modal, ConflictChoice, ConfirmChoice, InputIntent, Modal};
 pub use pane::Pane;
-pub use preview::draw_preview;
+pub use preview::{draw_preview, PreviewCache, PreviewContent};
 pub use statusbar::StatusBar;

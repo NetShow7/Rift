@@ -21,10 +21,12 @@ pub struct Pane {
     pub list_state: ListState,
     pub is_active: bool,
     pub filter: Option<String>,
+    pub scroll_threshold: usize,
+    pub visible_height: usize,
 }
 
 impl Pane {
-    pub fn new(cwd: PathBuf, entries: Vec<Entry>) -> Self {
+    pub fn new(cwd: PathBuf, entries: Vec<Entry>, scroll_threshold: usize) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
@@ -36,6 +38,8 @@ impl Pane {
             list_state,
             is_active: false,
             filter: None,
+            scroll_threshold,
+            visible_height: 20,
         }
     }
 
@@ -147,7 +151,25 @@ impl Pane {
             .title(format!(" {} ", title))
             .style(Style::default().fg(border_color));
 
+        // Apply scroll threshold: keep cursor at least `threshold` rows from top/bottom.
+        // Must happen before the immutable borrow through visible_entries().
+        let visible_height = area.height.saturating_sub(2) as usize;
+        self.visible_height = visible_height;
+        if visible_height > 0 {
+            let threshold = self.scroll_threshold.min(visible_height / 2);
+            let offset = self.list_state.offset();
+            let new_offset = if self.cursor < offset + threshold {
+                self.cursor.saturating_sub(threshold)
+            } else if self.cursor + threshold + 1 > offset + visible_height {
+                (self.cursor + threshold + 1).saturating_sub(visible_height)
+            } else {
+                offset
+            };
+            *self.list_state.offset_mut() = new_offset;
+        }
+
         let visible = self.visible_entries();
+
         let items: Vec<ListItem> = visible
             .iter()
             .map(|e| {
@@ -277,7 +299,7 @@ mod tests {
     #[test]
     fn pane_new() {
         let entries = make_entries();
-        let pane = Pane::new(PathBuf::from("/"), entries);
+        let pane = Pane::new(PathBuf::from("/"), entries, 3);
         assert_eq!(pane.cwd, PathBuf::from("/"));
         assert_eq!(pane.entries.len(), 4);
         assert_eq!(pane.cursor, 0);
@@ -288,13 +310,13 @@ mod tests {
 
     #[test]
     fn visible_entries_no_filter() {
-        let pane = Pane::new(PathBuf::from("/"), make_entries());
+        let pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         assert_eq!(pane.visible_entries().len(), 4);
     }
 
     #[test]
     fn visible_entries_with_filter() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.filter = Some("readme".into());
         assert_eq!(pane.visible_entries().len(), 1);
         assert_eq!(pane.visible_entries()[0].name, "readme.md");
@@ -302,33 +324,33 @@ mod tests {
 
     #[test]
     fn visible_entries_filter_no_match() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.filter = Some("nonexistent".into());
         assert!(pane.visible_entries().is_empty());
     }
 
     #[test]
     fn focused_entry() {
-        let pane = Pane::new(PathBuf::from("/"), make_entries());
+        let pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         assert_eq!(pane.focused_entry().unwrap().name, "projects");
     }
 
     #[test]
     fn focused_entry_empty() {
-        let pane = Pane::new(PathBuf::from("/"), vec![]);
+        let pane = Pane::new(PathBuf::from("/"), vec![], 3);
         assert!(pane.focused_entry().is_none());
     }
 
     #[test]
     fn move_up_stays_at_top() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.move_up();
         assert_eq!(pane.cursor, 0);
     }
 
     #[test]
     fn move_down_stays_at_bottom() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.cursor = 3;
         pane.move_down();
         assert_eq!(pane.cursor, 3);
@@ -336,7 +358,7 @@ mod tests {
 
     #[test]
     fn move_up_down() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.move_down();
         assert_eq!(pane.cursor, 1);
         pane.move_down();
@@ -347,7 +369,7 @@ mod tests {
 
     #[test]
     fn goto_top() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.cursor = 2;
         pane.goto_top();
         assert_eq!(pane.cursor, 0);
@@ -355,35 +377,35 @@ mod tests {
 
     #[test]
     fn goto_bottom() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.goto_bottom();
         assert_eq!(pane.cursor, 3);
     }
 
     #[test]
     fn goto_bottom_empty() {
-        let mut pane = Pane::new(PathBuf::from("/"), vec![]);
+        let mut pane = Pane::new(PathBuf::from("/"), vec![], 3);
         pane.goto_bottom();
         assert_eq!(pane.cursor, 0);
     }
 
     #[test]
     fn page_up_saturates() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.page_up(10);
         assert_eq!(pane.cursor, 0);
     }
 
     #[test]
     fn page_down_bounded() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.page_down(100);
         assert_eq!(pane.cursor, 3);
     }
 
     #[test]
     fn page_up_partial() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.cursor = 3;
         pane.page_up(2);
         assert_eq!(pane.cursor, 1);
@@ -391,14 +413,14 @@ mod tests {
 
     #[test]
     fn page_down_partial() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.page_down(2);
         assert_eq!(pane.cursor, 2);
     }
 
     #[test]
     fn toggle_selection() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.toggle_selection();
         assert_eq!(pane.selected.len(), 1);
         assert!(pane.selected.contains(&PathBuf::from("/projects")));
@@ -408,21 +430,21 @@ mod tests {
 
     #[test]
     fn toggle_selection_no_focused_entry() {
-        let mut pane = Pane::new(PathBuf::from("/"), vec![]);
+        let mut pane = Pane::new(PathBuf::from("/"), vec![], 3);
         pane.toggle_selection();
         assert!(pane.selected.is_empty());
     }
 
     #[test]
     fn select_all() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.select_all();
         assert_eq!(pane.selected.len(), 4);
     }
 
     #[test]
     fn clear_selection() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.select_all();
         pane.clear_selection();
         assert!(pane.selected.is_empty());
@@ -430,7 +452,7 @@ mod tests {
 
     #[test]
     fn operative_entries_uses_selected_when_present() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.selected.insert(PathBuf::from("/readme.md"));
         pane.selected.insert(PathBuf::from("/test.rs"));
         let ops = pane.operative_entries();
@@ -439,7 +461,7 @@ mod tests {
 
     #[test]
     fn operative_entries_uses_focused_when_no_selection() {
-        let pane = Pane::new(PathBuf::from("/"), make_entries());
+        let pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         let ops = pane.operative_entries();
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0], PathBuf::from("/projects"));
@@ -447,13 +469,13 @@ mod tests {
 
     #[test]
     fn operative_entries_empty_when_no_entries() {
-        let pane = Pane::new(PathBuf::from("/"), vec![]);
+        let pane = Pane::new(PathBuf::from("/"), vec![], 3);
         assert!(pane.operative_entries().is_empty());
     }
 
     #[test]
     fn filter_is_case_insensitive() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.filter = Some("README".into());
         assert_eq!(pane.visible_entries().len(), 1);
         pane.filter = Some("TEST".into());
@@ -462,7 +484,7 @@ mod tests {
 
     #[test]
     fn filter_partial_match() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.filter = Some("ro".into());
         assert_eq!(pane.visible_entries().len(), 1);
         assert_eq!(pane.visible_entries()[0].name, "projects");
@@ -470,7 +492,7 @@ mod tests {
 
     #[test]
     fn move_up_down_with_filter() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         pane.filter = Some("src".into());
         assert_eq!(pane.visible_entries().len(), 1);
         pane.move_down();
@@ -479,7 +501,7 @@ mod tests {
 
     #[test]
     fn list_state_updated_on_move() {
-        let mut pane = Pane::new(PathBuf::from("/"), make_entries());
+        let mut pane = Pane::new(PathBuf::from("/"), make_entries(), 3);
         assert_eq!(pane.list_state.selected(), Some(0));
         pane.move_down();
         assert_eq!(pane.list_state.selected(), Some(1));

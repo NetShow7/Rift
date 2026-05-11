@@ -6,7 +6,7 @@ use crate::{
     ui::{
         compute_layout, draw_modal, draw_preview,
         modal::{ConflictChoice, ConfirmChoice, SettingsEdit, SettingsState, SettingsTab},
-        Modal, Pane, StatusBar,
+        InputIntent, Modal, Pane, PreviewCache, StatusBar,
     },
 };
 use anyhow::Result;
@@ -58,6 +58,9 @@ pub struct App {
 
     pub running: bool,
     pub rt: tokio::runtime::Runtime,
+    pub preview_cache: PreviewCache,
+    /// Transient one-line message shown in the status bar (auto-clears after 2 s).
+    pub status_message: Option<(String, std::time::Instant)>,
 }
 
 /// Top-level input mode.
@@ -73,11 +76,12 @@ impl App {
         let show_hidden = config.general.show_hidden;
         let layout = config.general.layout.clone();
 
+        let scroll_threshold = config.general.scroll_threshold;
         let entries = read_dir(&start_dir, show_hidden)?;
-        let primary = Pane::new(start_dir.clone(), entries);
+        let primary = Pane::new(start_dir.clone(), entries, scroll_threshold);
 
         let parent = if matches!(layout, LayoutMode::Miller) {
-            build_parent_pane(&start_dir, show_hidden)
+            build_parent_pane(&start_dir, show_hidden, scroll_threshold)
         } else {
             None
         };
@@ -101,7 +105,18 @@ impl App {
             running: true,
             config,
             rt,
+            preview_cache: PreviewCache::new(),
+            status_message: None,
         })
+    }
+
+    /// Return a mutable reference to whichever pane is currently active.
+    fn active_pane_mut(&mut self) -> &mut Pane {
+        if self.active_pane == 1 {
+            self.secondary.as_mut().unwrap_or(&mut self.primary)
+        } else {
+            &mut self.primary
+        }
     }
 
     /// Find the key string bound to a built-in action, if any.
@@ -113,6 +128,23 @@ impl App {
 
     pub fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         while self.running {
+            // Refresh preview cache from whichever pane is active, not always primary
+            let focused = if self.active_pane == 1 {
+                self.secondary.as_ref().and_then(|p| p.focused_entry()).cloned()
+            } else {
+                self.primary.focused_entry().cloned()
+            };
+            if self.preview_cache.needs_refresh(focused.as_ref()) {
+                self.preview_cache.load(focused.as_ref());
+            }
+
+            // Expire transient status messages after 2 seconds
+            if let Some((_, ts)) = &self.status_message {
+                if ts.elapsed() >= Duration::from_secs(2) {
+                    self.status_message = None;
+                }
+            }
+
             terminal.draw(|frame| self.draw(frame))?;
 
             self.check_pending_paste()?;
@@ -161,14 +193,24 @@ impl App {
         }
 
         // Draw preview
-        let focused = self.primary.focused_entry().cloned();
         if let Some(preview_area) = layout_areas.preview {
-            draw_preview(frame, preview_area, focused.as_ref());
+            draw_preview(frame, preview_area, &self.preview_cache);
         }
 
-        // Draw status bar
-        let selected_count = self.primary.selected.len();
-        let filter = self.primary.filter.clone();
+        // Draw status bar — use active pane for focused entry and selection count
+        let focused = if self.active_pane == 1 {
+            self.secondary.as_ref().and_then(|p| p.focused_entry()).cloned()
+        } else {
+            self.primary.focused_entry().cloned()
+        };
+        let active = if self.active_pane == 1 {
+            self.secondary.as_ref().unwrap_or(&self.primary)
+        } else {
+            &self.primary
+        };
+        let selected_count = active.selected.len();
+        let filter = active.filter.clone();
+        let status_msg = self.status_message.as_ref().map(|(m, _)| m.as_str());
         // Resolve shortcut hints
         let show_hints = self.config.general.show_shortcut_hints;
         let key_help = if show_hints { self.key_for_action(&Action::Help) } else { None };
@@ -185,6 +227,7 @@ impl App {
             self.clipboard.is_some(),
             self.clipboard.as_ref().map(|c| c.is_cut).unwrap_or(false),
             filter.as_deref(),
+            status_msg,
             show_hints,
             key_help.as_deref(),
             key_quit.as_deref(),
@@ -226,15 +269,32 @@ impl App {
     }
 
     fn dispatch_action(&mut self, action: Action) -> Result<()> {
-        let pane = &mut self.primary;
-
         match action {
-            Action::MoveUp      => pane.move_up(),
-            Action::MoveDown    => pane.move_down(),
-            Action::GotoTop     => pane.goto_top(),
-            Action::GotoBottom  => pane.goto_bottom(),
-            Action::PageUp      => pane.page_up(20),
-            Action::PageDown    => pane.page_down(20),
+            Action::MoveUp      => self.active_pane_mut().move_up(),
+            Action::MoveDown    => self.active_pane_mut().move_down(),
+            Action::GotoTop     => self.active_pane_mut().goto_top(),
+            Action::GotoBottom  => self.active_pane_mut().goto_bottom(),
+            Action::PageUp => {
+                let pane = self.active_pane_mut();
+                let h = pane.visible_height.saturating_sub(1).max(1);
+                pane.page_up(h);
+            }
+            Action::PageDown => {
+                let pane = self.active_pane_mut();
+                let h = pane.visible_height.saturating_sub(1).max(1);
+                pane.page_down(h);
+            }
+
+            Action::SwitchPane => {
+                if self.secondary.is_some() {
+                    self.active_pane = 1 - self.active_pane;
+                } else {
+                    self.status_message = Some((
+                        "Dual layout required to switch panes (use CycleLayout to switch)".into(),
+                        std::time::Instant::now(),
+                    ));
+                }
+            }
 
             Action::MoveLeft | Action::GoParent => {
                 if let Some(parent) = self.primary.cwd.parent().map(|p| p.to_path_buf()) {
@@ -243,7 +303,7 @@ impl App {
             }
 
             Action::MoveRight | Action::OpenEntry => {
-                if let Some(entry) = pane.focused_entry().cloned() {
+                if let Some(entry) = self.active_pane_mut().focused_entry().cloned() {
                     if entry.is_dir() {
                         let path = entry.path.clone();
                         let _ = self.navigate_to(path);
@@ -252,13 +312,10 @@ impl App {
                 }
             }
 
-            Action::SelectToggle  => self.primary.toggle_selection(),
-            Action::SelectAll     => self.primary.select_all(),
-            Action::SelectNone    => {
-                self.primary.clear_selection();
-                if let InputMode::Filter(_) = &self.input_mode {
-                    self.primary.filter = None;
-                }
+            Action::SelectToggle  => self.active_pane_mut().toggle_selection(),
+            Action::SelectAll     => self.active_pane_mut().select_all(),
+            Action::SelectNone => {
+                self.active_pane_mut().clear_selection();
                 self.input_mode = InputMode::Normal;
             }
 
@@ -291,16 +348,16 @@ impl App {
             Action::Rename => {
                 if let Some(entry) = self.primary.focused_entry() {
                     let name = entry.name.clone();
-                    self.modal = Some(Modal::input("Rename", "New name:", &name));
+                    self.modal = Some(Modal::input("Rename", "New name:", &name, InputIntent::Rename));
                 }
             }
 
             Action::NewFile => {
-                self.modal = Some(Modal::input("New File", "File name:", ""));
+                self.modal = Some(Modal::input("New File", "File name:", "", InputIntent::NewFile));
             }
 
             Action::NewDir => {
-                self.modal = Some(Modal::input("New Directory", "Directory name:", ""));
+                self.modal = Some(Modal::input("New Directory", "Directory name:", "", InputIntent::NewDir));
             }
 
             Action::ToggleHidden => {
@@ -355,7 +412,9 @@ impl App {
 
             Action::OpenConfig => {
                 let path = Config::config_path();
-                let cmd = format!("$EDITOR {}", path.display());
+                let path_str = path.to_string_lossy();
+                let quoted = format!("'{}'", path_str.replace('\'', r"'\''"));
+                let cmd = format!("$EDITOR {}", quoted);
                 self.dispatch_shell(&cmd)?;
             }
 
@@ -364,6 +423,7 @@ impl App {
             }
 
             Action::InvertSelection => {
+                let pane = self.active_pane_mut();
                 let paths: Vec<PathBuf> = pane.visible_entries().iter().map(|e| e.path.clone()).collect();
                 for p in paths {
                     if pane.selected.contains(&p) {
@@ -397,8 +457,7 @@ impl App {
                 self.refresh_primary()?;
             }
             ShellMode::Capture => {
-                let rt = tokio::runtime::Handle::current();
-                let output = rt.block_on(shell::run_capture(&shell_bin, &cmd, &cwd));
+                let output = self.rt.block_on(shell::run_capture(&shell_bin, &cmd, &cwd));
                 let lines = match output {
                     Ok(out) => out.lines().map(|l| l.to_string()).collect(),
                     Err(e)  => vec![format!("Error: {}", e)],
@@ -627,8 +686,7 @@ impl App {
                 _ => {}
             },
 
-            Modal::Input { title, value, cursor, .. } => {
-                let title = title.clone();
+            Modal::Input { value, cursor, intent, .. } => {
                 match key.code {
                     KeyCode::Char(c) => {
                         value.insert(*cursor, c);
@@ -645,8 +703,9 @@ impl App {
                     KeyCode::Esc   => { self.modal = None; }
                     KeyCode::Enter => {
                         let val = value.clone();
+                        let int = intent.clone();
                         self.modal = None;
-                        self.apply_input(&title, &val)?;
+                        self.apply_input(int, &val)?;
                     }
                     _ => {}
                 }
@@ -684,10 +743,7 @@ impl App {
                     }
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         if let Some(tx) = response.take() {
-                            let new_name = conflict.conflict.src.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string();
+                            let new_name = auto_rename(&conflict.conflict.dst);
                             let _ = tx.send(ConflictResolution::Rename(new_name));
                         }
                         self.modal = None;
@@ -710,10 +766,7 @@ impl App {
                                 ConflictChoice::Skip      => ConflictResolution::Skip,
                                 ConflictChoice::Overwrite => ConflictResolution::Overwrite,
                                 ConflictChoice::Rename    => ConflictResolution::Rename(
-                                    conflict.conflict.src.file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .to_string(),
+                                    auto_rename(&conflict.conflict.dst),
                                 ),
                                 ConflictChoice::Abort     => ConflictResolution::Abort,
                             };
@@ -887,27 +940,26 @@ impl App {
         Ok(())
     }
 
-    fn apply_input(&mut self, title: &str, value: &str) -> Result<()> {
+    fn apply_input(&mut self, intent: InputIntent, value: &str) -> Result<()> {
         if value.is_empty() {
             return Ok(());
         }
 
-        match title {
-            "Rename" => {
+        match intent {
+            InputIntent::Rename => {
                 if let Some(entry) = self.primary.focused_entry() {
                     let src = entry.path.clone();
                     self.rt.block_on(fs::rename_entry(&src, value))?;
                 }
             }
-            "New File" => {
+            InputIntent::NewFile => {
                 let cwd = self.primary.cwd.clone();
                 self.rt.block_on(fs::create_file(&cwd, value))?;
             }
-            "New Directory" => {
+            InputIntent::NewDir => {
                 let cwd = self.primary.cwd.clone();
                 self.rt.block_on(fs::create_dir(&cwd, value))?;
             }
-            _ => {}
         }
 
         self.refresh_primary()?;
@@ -916,13 +968,14 @@ impl App {
 
     fn navigate_to(&mut self, path: PathBuf) -> Result<()> {
         let old_cwd = self.primary.cwd.clone();
+        let threshold = self.config.general.scroll_threshold;
         let entries = read_dir(&path, self.show_hidden)?;
-        self.primary = Pane::new(path.clone(), entries);
+        self.primary = Pane::new(path.clone(), entries, threshold);
         self.primary.clear_selection();
 
         // Update parent pane for Miller
         if matches!(self.layout, LayoutMode::Miller) {
-            self.parent = build_parent_pane(&path, self.show_hidden);
+            self.parent = build_parent_pane(&path, self.show_hidden, threshold);
             // Highlight the dir we came from in the parent
             if let Some(ref mut parent_pane) = self.parent {
                 if let Some(idx) = parent_pane.entries.iter().position(|e| e.path == old_cwd) {
@@ -946,18 +999,19 @@ impl App {
     }
 
     fn sync_secondary_pane(&mut self) -> Result<()> {
+        let threshold = self.config.general.scroll_threshold;
         match self.layout {
             LayoutMode::Dual => {
                 if self.secondary.is_none() {
                     let cwd = self.primary.cwd.clone();
                     let entries = read_dir(&cwd, self.show_hidden)?;
-                    self.secondary = Some(Pane::new(cwd, entries));
+                    self.secondary = Some(Pane::new(cwd, entries, threshold));
                 }
                 self.parent = None;
             }
             LayoutMode::Miller => {
                 self.secondary = None;
-                self.parent = build_parent_pane(&self.primary.cwd, self.show_hidden);
+                self.parent = build_parent_pane(&self.primary.cwd, self.show_hidden, threshold);
             }
             LayoutMode::Single => {
                 self.secondary = None;
@@ -968,10 +1022,10 @@ impl App {
     }
 }
 
-fn build_parent_pane(cwd: &PathBuf, show_hidden: bool) -> Option<Pane> {
+fn build_parent_pane(cwd: &PathBuf, show_hidden: bool, scroll_threshold: usize) -> Option<Pane> {
     let parent_path = cwd.parent()?;
     let entries = read_dir(parent_path, show_hidden).ok()?;
-    let mut pane = Pane::new(parent_path.to_path_buf(), entries);
+    let mut pane = Pane::new(parent_path.to_path_buf(), entries, scroll_threshold);
     // Highlight cwd in parent
     if let Some(idx) = pane.entries.iter().position(|e| &e.path == cwd) {
         pane.cursor = idx;
