@@ -6,7 +6,7 @@ use crate::{
     ui::{
         compute_layout, draw_modal, draw_preview,
         modal::{ConflictChoice, ConfirmChoice, SettingsEdit, SettingsState, SettingsTab},
-        Modal, Pane, StatusBar,
+        Modal, Pane, PreviewCache, StatusBar,
     },
 };
 use anyhow::Result;
@@ -58,6 +58,7 @@ pub struct App {
 
     pub running: bool,
     pub rt: tokio::runtime::Runtime,
+    pub preview_cache: PreviewCache,
 }
 
 /// Top-level input mode.
@@ -73,11 +74,12 @@ impl App {
         let show_hidden = config.general.show_hidden;
         let layout = config.general.layout.clone();
 
+        let scroll_threshold = config.general.scroll_threshold.min(5);
         let entries = read_dir(&start_dir, show_hidden)?;
-        let primary = Pane::new(start_dir.clone(), entries);
+        let primary = Pane::new(start_dir.clone(), entries, scroll_threshold);
 
         let parent = if matches!(layout, LayoutMode::Miller) {
-            build_parent_pane(&start_dir, show_hidden)
+            build_parent_pane(&start_dir, show_hidden, scroll_threshold)
         } else {
             None
         };
@@ -101,6 +103,7 @@ impl App {
             running: true,
             config,
             rt,
+            preview_cache: PreviewCache::new(),
         })
     }
 
@@ -113,6 +116,12 @@ impl App {
 
     pub fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         while self.running {
+            // Refresh preview cache outside of draw (I/O separated from render)
+            let focused = self.primary.focused_entry().cloned();
+            if self.preview_cache.needs_refresh(focused.as_ref()) {
+                self.preview_cache.load(focused.as_ref());
+            }
+
             terminal.draw(|frame| self.draw(frame))?;
 
             self.check_pending_paste()?;
@@ -161,12 +170,12 @@ impl App {
         }
 
         // Draw preview
-        let focused = self.primary.focused_entry().cloned();
         if let Some(preview_area) = layout_areas.preview {
-            draw_preview(frame, preview_area, focused.as_ref());
+            draw_preview(frame, preview_area, &self.preview_cache);
         }
 
         // Draw status bar
+        let focused = self.primary.focused_entry().cloned();
         let selected_count = self.primary.selected.len();
         let filter = self.primary.filter.clone();
         // Resolve shortcut hints
@@ -911,13 +920,14 @@ impl App {
 
     fn navigate_to(&mut self, path: PathBuf) -> Result<()> {
         let old_cwd = self.primary.cwd.clone();
+        let threshold = self.config.general.scroll_threshold.min(5);
         let entries = read_dir(&path, self.show_hidden)?;
-        self.primary = Pane::new(path.clone(), entries);
+        self.primary = Pane::new(path.clone(), entries, threshold);
         self.primary.clear_selection();
 
         // Update parent pane for Miller
         if matches!(self.layout, LayoutMode::Miller) {
-            self.parent = build_parent_pane(&path, self.show_hidden);
+            self.parent = build_parent_pane(&path, self.show_hidden, threshold);
             // Highlight the dir we came from in the parent
             if let Some(ref mut parent_pane) = self.parent {
                 if let Some(idx) = parent_pane.entries.iter().position(|e| e.path == old_cwd) {
@@ -941,18 +951,19 @@ impl App {
     }
 
     fn sync_secondary_pane(&mut self) -> Result<()> {
+        let threshold = self.config.general.scroll_threshold.min(5);
         match self.layout {
             LayoutMode::Dual => {
                 if self.secondary.is_none() {
                     let cwd = self.primary.cwd.clone();
                     let entries = read_dir(&cwd, self.show_hidden)?;
-                    self.secondary = Some(Pane::new(cwd, entries));
+                    self.secondary = Some(Pane::new(cwd, entries, threshold));
                 }
                 self.parent = None;
             }
             LayoutMode::Miller => {
                 self.secondary = None;
-                self.parent = build_parent_pane(&self.primary.cwd, self.show_hidden);
+                self.parent = build_parent_pane(&self.primary.cwd, self.show_hidden, threshold);
             }
             LayoutMode::Single => {
                 self.secondary = None;
@@ -963,10 +974,10 @@ impl App {
     }
 }
 
-fn build_parent_pane(cwd: &PathBuf, show_hidden: bool) -> Option<Pane> {
+fn build_parent_pane(cwd: &PathBuf, show_hidden: bool, scroll_threshold: usize) -> Option<Pane> {
     let parent_path = cwd.parent()?;
     let entries = read_dir(parent_path, show_hidden).ok()?;
-    let mut pane = Pane::new(parent_path.to_path_buf(), entries);
+    let mut pane = Pane::new(parent_path.to_path_buf(), entries, scroll_threshold);
     // Highlight cwd in parent
     if let Some(idx) = pane.entries.iter().position(|e| &e.path == cwd) {
         pane.cursor = idx;
