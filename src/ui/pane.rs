@@ -151,22 +151,14 @@ impl Pane {
             .title(format!(" {} ", title))
             .style(Style::default().fg(border_color));
 
-        // Apply scroll threshold: keep cursor at least `threshold` rows from top/bottom.
-        // Must happen before the immutable borrow through visible_entries().
         let visible_height = area.height.saturating_sub(2) as usize;
         self.visible_height = visible_height;
-        if visible_height > 0 {
-            let threshold = self.scroll_threshold.min(visible_height / 2);
-            let offset = self.list_state.offset();
-            let new_offset = if self.cursor < offset + threshold {
-                self.cursor.saturating_sub(threshold)
-            } else if self.cursor + threshold + 1 > offset + visible_height {
-                (self.cursor + threshold + 1).saturating_sub(visible_height)
-            } else {
-                offset
-            };
-            *self.list_state.offset_mut() = new_offset;
-        }
+
+        let threshold = if visible_height > 0 {
+            self.scroll_threshold.min(visible_height / 2)
+        } else {
+            0
+        };
 
         let visible = self.visible_entries();
 
@@ -209,7 +201,8 @@ impl Pane {
                 Style::default()
                     .bg(theme.colors.selection_bg.to_ratatui())
                     .add_modifier(Modifier::BOLD),
-            );
+            )
+            .scroll_padding(threshold);
 
         frame.render_stateful_widget(list, area, &mut self.list_state);
     }
