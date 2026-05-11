@@ -1,0 +1,112 @@
+# rift configuration
+# Place this file at: ~/.config/rift/config.toml
+
+[general]
+# Starting layout: "single", "dual", or "miller"
+layout = "miller"
+show_hidden = false
+follow_symlinks = true
+scroll_threshold = 500
+# Shell for shell: bindings and OpenShell action
+shell = "/bin/bash"
+# How to run shell commands: "capture" (show output in pane) or "takeover" (give terminal)
+shell_mode = "capture"
+confirm_delete = true
+# trash_dir = "~/.local/share/rift/trash"  # uncomment to enable trash instead of permanent delete
+
+[theme]
+border_style = "rounded"  # plain | rounded | double | thick | none
+
+[theme.colors]
+# Colours can be #rrggbb hex or named ANSI: black, red, green, yellow, blue, magenta, cyan, white, gray, reset
+foreground      = "#c0caf5"
+selection_bg    = "#364a82"
+selection_fg    = "#c0caf5"
+directory       = "#7aa2f7"
+symlink         = "#b4f9f8"
+executable      = "#9ece6a"
+archive         = "#f7768e"
+media           = "#ff9e64"
+hidden          = "#565f89"
+border_active   = "#7aa2f7"
+border_inactive = "#414868"
+statusbar_bg    = "#1f2335"
+statusbar_fg    = "#a9b1d6"
+error           = "#f7768e"
+warning         = "#e0af68"
+success         = "#9ece6a"
+modal_bg        = "#1a1b26"
+modal_border    = "#bb9af7"
+
+[theme.symbols]
+# Requires a Nerd Font. For plain ASCII, replace these.
+dir_open     = " "
+dir_closed   = " "
+symlink      = " "
+file         = " "
+selected     = "󰄬 "
+unselected   = "  "
+copy_marker  = " "
+cut_marker   = "󰆐 "
+error_marker = " "
+
+[keymap]
+# Built-in actions:
+#   move_up, move_down, move_left, move_right, page_up, page_down
+#   goto_top, goto_bottom, open_entry, go_parent
+#   select_toggle, select_all, select_none, invert_selection
+#   copy, cut, paste, delete, rename, new_file, new_dir
+#   toggle_hidden, toggle_preview, cycle_layout
+#   set_layout_single, set_layout_dual, set_layout_miller
+#   refresh, search, filter, clear_filter
+#   open_config, open_shell, quit, help
+
+# Navigation
+"up"        = "move_up"
+"down"      = "move_down"
+"left"      = "move_left"
+"right"     = "move_right"
+"k"         = "move_up"
+"j"         = "move_down"
+"h"         = "move_left"
+"l"         = "move_right"
+"enter"     = "open_entry"
+"backspace" = "go_parent"
+"page_up"   = "page_up"
+"page_down" = "page_down"
+"g"         = "goto_top"
+"G"         = "goto_bottom"
+
+# Selection
+"space"  = "select_toggle"
+"ctrl+a" = "select_all"
+"escape" = "select_none"
+
+# File operations — modern shortcuts
+"ctrl+c"       = "copy"
+"ctrl+x"       = "cut"
+"ctrl+v"       = "paste"
+"delete"       = "delete"
+"f2"           = "rename"
+"ctrl+n"       = "new_file"
+"ctrl+shift+n" = "new_dir"
+
+# View
+"ctrl+h" = "toggle_hidden"
+"ctrl+p" = "toggle_preview"
+"tab"    = "cycle_layout"
+"r"      = "refresh"
+
+# Search / filter
+"/"      = "search"
+"f"      = "filter"
+
+# Shell passthrough examples
+# {} is replaced with the focused file path
+"ctrl+e" = "shell:$EDITOR {}"
+"ctrl+t" = "shell:$SHELL"
+# "ctrl+o" = "shell:xdg-open {}"
+
+# App
+"?" = "help"
+"q" = "quit"

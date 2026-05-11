@@ -1,0 +1,30 @@
+[package]
+name = "rift"
+version = "0.1.0"
+edition = "2021"
+description = "A modern TUI file manager with configurable keybindings, themes, and layouts"
+
+[[bin]]
+name = "rift"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.26"
+crossterm = "0.27"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+notify = "6"
+anyhow = "1"
+thiserror = "1"
+dirs = "5"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+humansize = "2"
+unicode-width = "0.1"
+indexmap = "=2.2.6"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
