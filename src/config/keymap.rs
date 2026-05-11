@@ -16,6 +16,7 @@ pub enum Action {
     GotoBottom,
     OpenEntry,
     GoParent,
+    SwitchPane,
 
     // Selection
     SelectToggle,
@@ -108,7 +109,8 @@ impl Default for Keymap {
         // View
         m.insert("ctrl+h".into(),      KeyBinding::Action(Action::ToggleHidden));
         m.insert("ctrl+p".into(),      KeyBinding::Action(Action::TogglePreview));
-        m.insert("tab".into(),         KeyBinding::Action(Action::CycleLayout));
+        m.insert("tab".into(),         KeyBinding::Action(Action::SwitchPane));
+        m.insert("ctrl+l".into(),      KeyBinding::Action(Action::CycleLayout));
         m.insert("r".into(),           KeyBinding::Action(Action::Refresh));
 
         // Search

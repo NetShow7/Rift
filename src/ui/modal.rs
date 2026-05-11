@@ -9,6 +9,13 @@ use ratatui::{
     Frame,
 };
 
+#[derive(Debug, Clone)]
+pub enum InputIntent {
+    Rename,
+    NewFile,
+    NewDir,
+}
+
 /// All modal dialogs the app can show.
 #[derive(Debug, Clone)]
 pub enum Modal {
@@ -29,6 +36,7 @@ pub enum Modal {
         prompt: String,
         value: String,
         cursor: usize,
+        intent: InputIntent,
     },
     /// Operation summary after batch op completes.
     Summary {
@@ -85,7 +93,7 @@ impl Modal {
         }
     }
 
-    pub fn input(title: impl Into<String>, prompt: impl Into<String>, prefill: &str) -> Self {
+    pub fn input(title: impl Into<String>, prompt: impl Into<String>, prefill: &str, intent: InputIntent) -> Self {
         let value = prefill.to_string();
         let cursor = value.len();
         Self::Input {
@@ -93,6 +101,7 @@ impl Modal {
             prompt: prompt.into(),
             value,
             cursor,
+            intent,
         }
     }
 }
@@ -111,7 +120,7 @@ pub fn draw_modal(frame: &mut Frame, modal: &Modal, area: Rect) {
         Modal::Confirm { title, message, selected } => {
             draw_confirm(frame, title, message, selected, area)
         }
-        Modal::Input { title, prompt, value, cursor } => {
+        Modal::Input { title, prompt, value, cursor, .. } => {
             draw_input(frame, title, prompt, value, *cursor, area)
         }
         Modal::Summary { title, lines, scroll } => {
@@ -1051,6 +1060,7 @@ fn id_label(id: &SettingId) -> &'static str {
                 OpenSettings => "Settings",
                 Quit => "Quit",
                 Help => "Help",
+                SwitchPane => "Switch pane",
             }
         }
     }
@@ -1087,9 +1097,9 @@ mod tests {
 
     #[test]
     fn modal_input_constructor() {
-        let m = Modal::input("Rename", "New name:", "old.txt");
+        let m = Modal::input("Rename", "New name:", "old.txt", InputIntent::Rename);
         match &m {
-            Modal::Input { title, prompt, value, cursor } => {
+            Modal::Input { title, prompt, value, cursor, .. } => {
                 assert_eq!(title, "Rename");
                 assert_eq!(prompt, "New name:");
                 assert_eq!(value, "old.txt");
@@ -1101,7 +1111,7 @@ mod tests {
 
     #[test]
     fn modal_input_empty_prefill() {
-        let m = Modal::input("New File", "File name:", "");
+        let m = Modal::input("New File", "File name:", "", InputIntent::NewFile);
         match &m {
             Modal::Input { value, cursor, .. } => {
                 assert_eq!(value, "");
