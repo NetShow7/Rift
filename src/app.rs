@@ -229,7 +229,7 @@ impl App {
                 if let Some(entry) = pane.focused_entry().cloned() {
                     if entry.is_dir() {
                         let path = entry.path.clone();
-                        self.navigate_to(path)?;
+                        let _ = self.navigate_to(path);
                     }
                     // TODO: open file with $OPENER
                 }
