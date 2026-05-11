@@ -23,6 +23,7 @@ impl StatusBar {
         has_clipboard: bool,
         clipboard_is_cut: bool,
         filter: Option<&str>,
+        status_message: Option<&str>,
         show_shortcut_hints: bool,
         key_help: Option<&str>,
         key_quit: Option<&str>,
@@ -41,7 +42,12 @@ impl StatusBar {
             Span::styled(&cwd_str, Style::default().fg(accent).bg(bg)),
         ];
 
-        if let Some(f) = filter {
+        if let Some(msg) = status_message {
+            left.push(Span::styled(
+                format!("  {}", msg),
+                Style::default().fg(warn).bg(bg),
+            ));
+        } else if let Some(f) = filter {
             left.push(Span::styled(
                 format!("  [filter: {}]", f),
                 Style::default().fg(warn).bg(bg),

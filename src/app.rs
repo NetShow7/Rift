@@ -59,6 +59,8 @@ pub struct App {
     pub running: bool,
     pub rt: tokio::runtime::Runtime,
     pub preview_cache: PreviewCache,
+    /// Transient one-line message shown in the status bar (auto-clears after 2 s).
+    pub status_message: Option<(String, std::time::Instant)>,
 }
 
 /// Top-level input mode.
@@ -74,7 +76,7 @@ impl App {
         let show_hidden = config.general.show_hidden;
         let layout = config.general.layout.clone();
 
-        let scroll_threshold = config.general.scroll_threshold.min(5);
+        let scroll_threshold = config.general.scroll_threshold;
         let entries = read_dir(&start_dir, show_hidden)?;
         let primary = Pane::new(start_dir.clone(), entries, scroll_threshold);
 
@@ -104,6 +106,7 @@ impl App {
             config,
             rt,
             preview_cache: PreviewCache::new(),
+            status_message: None,
         })
     }
 
@@ -125,10 +128,21 @@ impl App {
 
     pub fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         while self.running {
-            // Refresh preview cache outside of draw (I/O separated from render)
-            let focused = self.primary.focused_entry().cloned();
+            // Refresh preview cache from whichever pane is active, not always primary
+            let focused = if self.active_pane == 1 {
+                self.secondary.as_ref().and_then(|p| p.focused_entry()).cloned()
+            } else {
+                self.primary.focused_entry().cloned()
+            };
             if self.preview_cache.needs_refresh(focused.as_ref()) {
                 self.preview_cache.load(focused.as_ref());
+            }
+
+            // Expire transient status messages after 2 seconds
+            if let Some((_, ts)) = &self.status_message {
+                if ts.elapsed() >= Duration::from_secs(2) {
+                    self.status_message = None;
+                }
             }
 
             terminal.draw(|frame| self.draw(frame))?;
@@ -183,10 +197,15 @@ impl App {
             draw_preview(frame, preview_area, &self.preview_cache);
         }
 
-        // Draw status bar
-        let focused = self.primary.focused_entry().cloned();
+        // Draw status bar — use active pane for focused entry and selection count
+        let focused = if self.active_pane == 1 {
+            self.secondary.as_ref().and_then(|p| p.focused_entry()).cloned()
+        } else {
+            self.primary.focused_entry().cloned()
+        };
         let selected_count = self.primary.selected.len();
         let filter = self.primary.filter.clone();
+        let status_msg = self.status_message.as_ref().map(|(m, _)| m.as_str());
         // Resolve shortcut hints
         let show_hints = self.config.general.show_shortcut_hints;
         let key_help = if show_hints { self.key_for_action(&Action::Help) } else { None };
@@ -203,6 +222,7 @@ impl App {
             self.clipboard.is_some(),
             self.clipboard.as_ref().map(|c| c.is_cut).unwrap_or(false),
             filter.as_deref(),
+            status_msg,
             show_hints,
             key_help.as_deref(),
             key_quit.as_deref(),
@@ -263,6 +283,11 @@ impl App {
             Action::SwitchPane => {
                 if self.secondary.is_some() {
                     self.active_pane = 1 - self.active_pane;
+                } else {
+                    self.status_message = Some((
+                        "Dual layout required to switch panes (use CycleLayout to switch)".into(),
+                        std::time::Instant::now(),
+                    ));
                 }
             }
 
