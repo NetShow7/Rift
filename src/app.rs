@@ -13,8 +13,11 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
+    collections::HashMap,
     io,
     path::PathBuf,
+    sync::{mpsc, Arc},
+    thread,
     time::Duration,
 };
 
@@ -23,6 +26,13 @@ use std::{
 pub struct Clipboard {
     pub paths: Vec<PathBuf>,
     pub is_cut: bool,
+}
+
+/// A paste operation running on a background thread.
+pub(crate) struct BackgroundPaste {
+    result_rx: mpsc::Receiver<Vec<OpResult>>,
+    sources: Vec<PathBuf>,
+    dest: PathBuf,
 }
 
 pub struct App {
@@ -42,6 +52,7 @@ pub struct App {
     pub active_pane: usize,
 
     pub clipboard: Option<Clipboard>,
+    pub pending_paste: Option<BackgroundPaste>,
     pub modal: Option<Modal>,
     pub input_mode: InputMode,
 
@@ -84,6 +95,7 @@ impl App {
             parent,
             active_pane: 0,
             clipboard: None,
+            pending_paste: None,
             modal: None,
             input_mode: InputMode::Normal,
             running: true,
@@ -95,6 +107,8 @@ impl App {
     pub fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         while self.running {
             terminal.draw(|frame| self.draw(frame))?;
+
+            self.check_pending_paste()?;
 
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
@@ -382,19 +396,27 @@ impl App {
         let is_cut = clip.is_cut;
 
         // Phase 1: detect conflicts and collect user resolutions interactively
-        let mut resolution_map: std::collections::HashMap<PathBuf, ConflictResolution> =
-            std::collections::HashMap::new();
-
+        let mut resolution_map: HashMap<PathBuf, ConflictResolution> = HashMap::new();
         for src in &sources {
             let name = src.file_name().unwrap_or_default();
             let dst = dest.join(name);
+
+            // Same path — pasting into origin directory
+            if src == &dst {
+                if is_cut {
+                    continue;
+                }
+                let new_name = auto_rename(&dst);
+                resolution_map.insert(src.clone(), ConflictResolution::Rename(new_name));
+                continue;
+            }
+
             if dst.exists() {
-                let (tx, rx) = std::sync::mpsc::channel();
+                let (tx, rx) = mpsc::channel();
                 self.modal = Some(Modal::conflict(
                     Conflict { src: src.clone(), dst: dst.clone() },
                     tx,
                 ));
-                // Nested event loop until user dismisses modal
                 while self.modal.is_some() {
                     if event::poll(Duration::from_millis(50))? {
                         if let Event::Key(key) = event::read()? {
@@ -413,28 +435,73 @@ impl App {
             }
         }
 
-        // Phase 2: execute operations with pre-collected resolutions
-        let results = if is_cut {
-            self.rt.block_on(fs::move_entries(&sources, &dest, |conflict| {
-                resolution_map
-                    .get(&conflict.src)
-                    .cloned()
-                    .unwrap_or(ConflictResolution::Overwrite)
-            }))
-        } else {
-            self.rt.block_on(fs::copy_entries(&sources, &dest, |conflict| {
-                resolution_map
-                    .get(&conflict.src)
-                    .cloned()
-                    .unwrap_or(ConflictResolution::Overwrite)
-            }))
-        };
-
         if is_cut {
             self.clipboard = None;
         }
 
-        // Show summary
+        // Phase 2: spawn background thread so the UI stays responsive
+        let resolutions = Arc::new(resolution_map);
+        let sources_for_thread = sources.clone();
+        let dest_for_thread = dest.clone();
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build background tokio runtime");
+
+            let resolve = {
+                let resolutions = Arc::clone(&resolutions);
+                move |conflict: Conflict| -> ConflictResolution {
+                    resolutions
+                        .get(&conflict.src)
+                        .cloned()
+                        .unwrap_or(ConflictResolution::Overwrite)
+                }
+            };
+
+            let results = if is_cut {
+                rt.block_on(fs::move_entries(&sources_for_thread, &dest_for_thread, resolve))
+            } else {
+                rt.block_on(fs::copy_entries(&sources_for_thread, &dest_for_thread, resolve))
+            };
+
+            let _ = tx.send(results);
+        });
+
+        self.pending_paste = Some(BackgroundPaste {
+            result_rx: rx,
+            sources,
+            dest,
+        });
+
+        Ok(())
+    }
+
+    fn check_pending_paste(&mut self) -> Result<()> {
+        let Some(pending) = &self.pending_paste else { return Ok(()) };
+
+        match pending.result_rx.try_recv() {
+            Ok(results) => {
+                let pending = self.pending_paste.take().unwrap();
+                self.handle_paste_results(results, &pending.sources, &pending.dest)?;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pending_paste = None;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_paste_results(
+        &mut self,
+        results: Vec<OpResult>,
+        _sources: &[PathBuf],
+        _dest: &PathBuf,
+    ) -> Result<()> {
         let failures: Vec<String> = results
             .iter()
             .filter_map(|r| {
@@ -785,4 +852,26 @@ fn build_parent_pane(cwd: &PathBuf, show_hidden: bool) -> Option<Pane> {
         pane.list_state.select(Some(idx));
     }
     Some(pane)
+}
+
+/// Generate a non-colliding filename like `file_copy.txt`, `file_copy_2.txt`, etc.
+fn auto_rename(path: &std::path::Path) -> String {
+    let parent = path.parent().unwrap_or(std::path::Path::new("."));
+    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+
+    let candidate = format!("{}_copy{}", name, ext);
+    if !parent.join(&candidate).exists() {
+        return candidate;
+    }
+    for i in 2.. {
+        let candidate = format!("{}_copy_{}{}", name, i, ext);
+        if !parent.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    format!("{}_copy_{}{}", name, std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs(), ext)
 }
