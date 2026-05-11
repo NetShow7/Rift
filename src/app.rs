@@ -6,7 +6,7 @@ use crate::{
     ui::{
         compute_layout, draw_modal, draw_preview,
         modal::{ConflictChoice, ConfirmChoice, SettingsEdit, SettingsState, SettingsTab},
-        Modal, Pane, PreviewCache, StatusBar,
+        InputIntent, Modal, Pane, PreviewCache, StatusBar,
     },
 };
 use anyhow::Result;
@@ -105,6 +105,15 @@ impl App {
             rt,
             preview_cache: PreviewCache::new(),
         })
+    }
+
+    /// Return a mutable reference to whichever pane is currently active.
+    fn active_pane_mut(&mut self) -> &mut Pane {
+        if self.active_pane == 1 {
+            self.secondary.as_mut().unwrap_or(&mut self.primary)
+        } else {
+            &mut self.primary
+        }
     }
 
     /// Find the key string bound to a built-in action, if any.
@@ -235,15 +244,27 @@ impl App {
     }
 
     fn dispatch_action(&mut self, action: Action) -> Result<()> {
-        let pane = &mut self.primary;
-
         match action {
-            Action::MoveUp      => pane.move_up(),
-            Action::MoveDown    => pane.move_down(),
-            Action::GotoTop     => pane.goto_top(),
-            Action::GotoBottom  => pane.goto_bottom(),
-            Action::PageUp      => pane.page_up(20),
-            Action::PageDown    => pane.page_down(20),
+            Action::MoveUp      => self.active_pane_mut().move_up(),
+            Action::MoveDown    => self.active_pane_mut().move_down(),
+            Action::GotoTop     => self.active_pane_mut().goto_top(),
+            Action::GotoBottom  => self.active_pane_mut().goto_bottom(),
+            Action::PageUp => {
+                let pane = self.active_pane_mut();
+                let h = pane.visible_height.saturating_sub(1).max(1);
+                pane.page_up(h);
+            }
+            Action::PageDown => {
+                let pane = self.active_pane_mut();
+                let h = pane.visible_height.saturating_sub(1).max(1);
+                pane.page_down(h);
+            }
+
+            Action::SwitchPane => {
+                if self.secondary.is_some() {
+                    self.active_pane = 1 - self.active_pane;
+                }
+            }
 
             Action::MoveLeft | Action::GoParent => {
                 if let Some(parent) = self.primary.cwd.parent().map(|p| p.to_path_buf()) {
@@ -252,7 +273,7 @@ impl App {
             }
 
             Action::MoveRight | Action::OpenEntry => {
-                if let Some(entry) = pane.focused_entry().cloned() {
+                if let Some(entry) = self.active_pane_mut().focused_entry().cloned() {
                     if entry.is_dir() {
                         let path = entry.path.clone();
                         let _ = self.navigate_to(path);
@@ -261,13 +282,10 @@ impl App {
                 }
             }
 
-            Action::SelectToggle  => self.primary.toggle_selection(),
-            Action::SelectAll     => self.primary.select_all(),
-            Action::SelectNone    => {
-                self.primary.clear_selection();
-                if let InputMode::Filter(_) = &self.input_mode {
-                    self.primary.filter = None;
-                }
+            Action::SelectToggle  => self.active_pane_mut().toggle_selection(),
+            Action::SelectAll     => self.active_pane_mut().select_all(),
+            Action::SelectNone => {
+                self.active_pane_mut().clear_selection();
                 self.input_mode = InputMode::Normal;
             }
 
@@ -300,16 +318,16 @@ impl App {
             Action::Rename => {
                 if let Some(entry) = self.primary.focused_entry() {
                     let name = entry.name.clone();
-                    self.modal = Some(Modal::input("Rename", "New name:", &name));
+                    self.modal = Some(Modal::input("Rename", "New name:", &name, InputIntent::Rename));
                 }
             }
 
             Action::NewFile => {
-                self.modal = Some(Modal::input("New File", "File name:", ""));
+                self.modal = Some(Modal::input("New File", "File name:", "", InputIntent::NewFile));
             }
 
             Action::NewDir => {
-                self.modal = Some(Modal::input("New Directory", "Directory name:", ""));
+                self.modal = Some(Modal::input("New Directory", "Directory name:", "", InputIntent::NewDir));
             }
 
             Action::ToggleHidden => {
@@ -375,6 +393,7 @@ impl App {
             }
 
             Action::InvertSelection => {
+                let pane = self.active_pane_mut();
                 let paths: Vec<PathBuf> = pane.visible_entries().iter().map(|e| e.path.clone()).collect();
                 for p in paths {
                     if pane.selected.contains(&p) {
@@ -637,8 +656,7 @@ impl App {
                 _ => {}
             },
 
-            Modal::Input { title, value, cursor, .. } => {
-                let title = title.clone();
+            Modal::Input { value, cursor, intent, .. } => {
                 match key.code {
                     KeyCode::Char(c) => {
                         value.insert(*cursor, c);
@@ -655,8 +673,9 @@ impl App {
                     KeyCode::Esc   => { self.modal = None; }
                     KeyCode::Enter => {
                         let val = value.clone();
+                        let int = intent.clone();
                         self.modal = None;
-                        self.apply_input(&title, &val)?;
+                        self.apply_input(int, &val)?;
                     }
                     _ => {}
                 }
@@ -891,27 +910,26 @@ impl App {
         Ok(())
     }
 
-    fn apply_input(&mut self, title: &str, value: &str) -> Result<()> {
+    fn apply_input(&mut self, intent: InputIntent, value: &str) -> Result<()> {
         if value.is_empty() {
             return Ok(());
         }
 
-        match title {
-            "Rename" => {
+        match intent {
+            InputIntent::Rename => {
                 if let Some(entry) = self.primary.focused_entry() {
                     let src = entry.path.clone();
                     self.rt.block_on(fs::rename_entry(&src, value))?;
                 }
             }
-            "New File" => {
+            InputIntent::NewFile => {
                 let cwd = self.primary.cwd.clone();
                 self.rt.block_on(fs::create_file(&cwd, value))?;
             }
-            "New Directory" => {
+            InputIntent::NewDir => {
                 let cwd = self.primary.cwd.clone();
                 self.rt.block_on(fs::create_dir(&cwd, value))?;
             }
-            _ => {}
         }
 
         self.refresh_primary()?;

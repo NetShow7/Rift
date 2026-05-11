@@ -22,6 +22,7 @@ pub struct Pane {
     pub is_active: bool,
     pub filter: Option<String>,
     pub scroll_threshold: usize,
+    pub visible_height: usize,
 }
 
 impl Pane {
@@ -38,6 +39,7 @@ impl Pane {
             is_active: false,
             filter: None,
             scroll_threshold,
+            visible_height: 20,
         }
     }
 
@@ -152,6 +154,7 @@ impl Pane {
         // Apply scroll threshold: keep cursor at least `threshold` rows from top/bottom.
         // Must happen before the immutable borrow through visible_entries().
         let visible_height = area.height.saturating_sub(2) as usize;
+        self.visible_height = visible_height;
         if visible_height > 0 {
             let threshold = self.scroll_threshold.min(visible_height / 2);
             let offset = self.list_state.offset();
