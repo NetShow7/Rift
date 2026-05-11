@@ -74,19 +74,33 @@ pub fn compute_layout(
         }
 
         LayoutMode::Miller => {
-            // Parent | Current | Preview/Children
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(40),
-                    Constraint::Percentage(35),
-                ])
-                .split(main);
-            LayoutAreas {
-                panes: vec![cols[0], cols[1]],
-                statusbar,
-                preview: Some(cols[2]),
+            if show_preview {
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(40),
+                        Constraint::Percentage(35),
+                    ])
+                    .split(main);
+                LayoutAreas {
+                    panes: vec![cols[0], cols[1]],
+                    statusbar,
+                    preview: Some(cols[2]),
+                }
+            } else {
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(35),
+                        Constraint::Percentage(65),
+                    ])
+                    .split(main);
+                LayoutAreas {
+                    panes: vec![cols[0], cols[1]],
+                    statusbar,
+                    preview: None,
+                }
             }
         }
     }

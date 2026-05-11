@@ -1,5 +1,6 @@
 use crate::{config::Theme, fs::Entry};
 use humansize::{format_size, BINARY};
+use unicode_width::UnicodeWidthStr;
 use ratatui::{
     layout::Rect,
     style::Style,
@@ -69,7 +70,7 @@ impl StatusBar {
         let left_str: String = left.iter().map(|s| s.content.as_ref()).collect();
         let padding = area
             .width
-            .saturating_sub(left_str.len() as u16 + right_str.len() as u16 + 2) as usize;
+            .saturating_sub(left_str.width() as u16 + right_str.width() as u16 + 2) as usize;
         let pad = " ".repeat(padding);
 
         let line = Line::from(vec![

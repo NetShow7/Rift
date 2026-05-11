@@ -1,4 +1,5 @@
-use crate::fs::Conflict;
+use crate::fs::{Conflict, ConflictResolution};
+use std::sync::mpsc::Sender;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -13,6 +14,7 @@ pub enum Modal {
     /// Conflict during copy/move: show options to user.
     Conflict {
         conflict: ConflictDialogState,
+        response: Option<Sender<ConflictResolution>>,
     },
     /// Simple yes/no confirmation (e.g. delete).
     Confirm {
@@ -60,13 +62,14 @@ pub enum ConfirmChoice {
 }
 
 impl Modal {
-    pub fn conflict(conflict: Conflict) -> Self {
+    pub fn conflict(conflict: Conflict, response: Sender<ConflictResolution>) -> Self {
         Self::Conflict {
             conflict: ConflictDialogState {
                 conflict,
                 selected: ConflictChoice::Skip,
                 rename_input: None,
             },
+            response: Some(response),
         }
     }
 
@@ -100,7 +103,7 @@ pub fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
 
 pub fn draw_modal(frame: &mut Frame, modal: &Modal, area: Rect) {
     match modal {
-        Modal::Conflict { conflict } => draw_conflict(frame, conflict, area),
+        Modal::Conflict { conflict, .. } => draw_conflict(frame, conflict, area),
         Modal::Confirm { title, message, selected } => {
             draw_confirm(frame, title, message, selected, area)
         }

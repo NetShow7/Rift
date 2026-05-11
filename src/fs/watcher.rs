@@ -16,7 +16,7 @@ impl FsWatcher {
             if let Ok(event) = res {
                 for p in event.paths {
                     if let Some(parent) = p.parent() {
-                        let _ = tx.blocking_send(parent.to_path_buf());
+                        let _ = tx.try_send(parent.to_path_buf());
                     }
                 }
             }

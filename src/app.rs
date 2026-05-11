@@ -5,7 +5,7 @@ use crate::{
     shell,
     ui::{
         compute_layout, draw_modal, draw_preview,
-        modal::{ConflictChoice, ConfirmChoice, ConflictDialogState},
+        modal::{ConflictChoice, ConfirmChoice},
         Modal, Pane, StatusBar,
     },
 };
@@ -15,7 +15,6 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
     io,
     path::PathBuf,
-    sync::mpsc,
     time::Duration,
 };
 
@@ -24,14 +23,6 @@ use std::{
 pub struct Clipboard {
     pub paths: Vec<PathBuf>,
     pub is_cut: bool,
-}
-
-/// Top-level input mode.
-pub enum InputMode {
-    Normal,
-    Search(String),
-    Filter(String),
-    AwaitingModal,
 }
 
 pub struct App {
@@ -55,6 +46,15 @@ pub struct App {
     pub input_mode: InputMode,
 
     pub running: bool,
+    pub rt: tokio::runtime::Runtime,
+}
+
+/// Top-level input mode.
+pub enum InputMode {
+    Normal,
+    Search(String),
+    Filter(String),
+    AwaitingModal,
 }
 
 impl App {
@@ -71,6 +71,10 @@ impl App {
             None
         };
 
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
         Ok(Self {
             layout,
             show_preview: true,
@@ -84,6 +88,7 @@ impl App {
             input_mode: InputMode::Normal,
             running: true,
             config,
+            rt,
         })
     }
 
@@ -135,13 +140,12 @@ impl App {
         }
 
         // Draw preview
+        let focused = self.primary.focused_entry().cloned();
         if let Some(preview_area) = layout_areas.preview {
-            let focused_entry = self.primary.focused_entry().cloned();
-            draw_preview(frame, preview_area, focused_entry.as_ref());
+            draw_preview(frame, preview_area, focused.as_ref());
         }
 
         // Draw status bar
-        let focused = self.primary.focused_entry().cloned();
         let selected_count = self.primary.selected.len();
         let filter = self.primary.filter.clone();
         StatusBar::draw(
@@ -321,12 +325,12 @@ impl App {
             }
 
             Action::InvertSelection => {
-                let all: Vec<PathBuf> = self.primary.entries.iter().map(|e| e.path.clone()).collect();
-                for p in all {
-                    if self.primary.selected.contains(&p) {
-                        self.primary.selected.remove(&p);
+                let paths: Vec<PathBuf> = pane.visible_entries().iter().map(|e| e.path.clone()).collect();
+                for p in paths {
+                    if pane.selected.contains(&p) {
+                        pane.selected.remove(&p);
                     } else {
-                        self.primary.selected.insert(p);
+                        pane.selected.insert(p);
                     }
                 }
             }
@@ -374,36 +378,55 @@ impl App {
     fn do_paste(&mut self) -> Result<()> {
         let Some(clip) = self.clipboard.clone() else { return Ok(()) };
         let dest = self.primary.cwd.clone();
-
-        // Collect conflict resolutions interactively
-        // For now we queue the op and let the async runtime handle it;
-        // conflicts will queue modals via a channel in a fuller implementation.
-        // Here we do a synchronous resolution loop for the MVP.
-        let (tx, rx) = mpsc::channel::<ConflictResolution>();
-
-        // We resolve conflicts by showing a modal — but since our event loop
-        // is single-threaded, we use a simpler approach: run the op synchronously
-        // with a blocking resolver that shows the modal and spins until resolved.
-        //
-        // In a production version this would be an async task with a oneshot channel.
-
         let sources = clip.paths.clone();
         let is_cut = clip.is_cut;
 
-        // Synchronous paste with inline conflict handling
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        // Phase 1: detect conflicts and collect user resolutions interactively
+        let mut resolution_map: std::collections::HashMap<PathBuf, ConflictResolution> =
+            std::collections::HashMap::new();
 
+        for src in &sources {
+            let name = src.file_name().unwrap_or_default();
+            let dst = dest.join(name);
+            if dst.exists() {
+                let (tx, rx) = std::sync::mpsc::channel();
+                self.modal = Some(Modal::conflict(
+                    Conflict { src: src.clone(), dst: dst.clone() },
+                    tx,
+                ));
+                // Nested event loop until user dismisses modal
+                while self.modal.is_some() {
+                    if event::poll(Duration::from_millis(50))? {
+                        if let Event::Key(key) = event::read()? {
+                            if key.kind == KeyEventKind::Press {
+                                self.handle_modal_key(key)?;
+                            }
+                        }
+                    }
+                }
+                let res = rx.try_recv().unwrap_or(ConflictResolution::Skip);
+                if matches!(res, ConflictResolution::Abort) {
+                    resolution_map.insert(src.clone(), ConflictResolution::Abort);
+                    break;
+                }
+                resolution_map.insert(src.clone(), res);
+            }
+        }
+
+        // Phase 2: execute operations with pre-collected resolutions
         let results = if is_cut {
-            rt.block_on(fs::move_entries(&sources, &dest, |conflict| {
-                // TODO: surface modal — for MVP, default to skip
-                let _ = tx.send(ConflictResolution::Skip);
-                ConflictResolution::Skip
+            self.rt.block_on(fs::move_entries(&sources, &dest, |conflict| {
+                resolution_map
+                    .get(&conflict.src)
+                    .cloned()
+                    .unwrap_or(ConflictResolution::Overwrite)
             }))
         } else {
-            rt.block_on(fs::copy_entries(&sources, &dest, |_conflict| {
-                ConflictResolution::Skip
+            self.rt.block_on(fs::copy_entries(&sources, &dest, |conflict| {
+                resolution_map
+                    .get(&conflict.src)
+                    .cloned()
+                    .unwrap_or(ConflictResolution::Overwrite)
             }))
         };
 
@@ -411,12 +434,23 @@ impl App {
             self.clipboard = None;
         }
 
-        // Show summary if any failures
+        // Show summary
         let failures: Vec<String> = results
             .iter()
             .filter_map(|r| {
                 if let OpResult::Failed { src, error } = r {
                     Some(format!("✗ {}: {}", src.display(), error))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let skips: Vec<String> = results
+            .iter()
+            .filter_map(|r| {
+                if let OpResult::Skipped { src } = r {
+                    Some(format!("→ {}: skipped", src.display()))
                 } else {
                     None
                 }
@@ -429,6 +463,12 @@ impl App {
                 lines: failures,
                 scroll: 0,
             });
+        } else if !skips.is_empty() {
+            self.modal = Some(Modal::Summary {
+                title: "Paste — Skipped".into(),
+                lines: skips,
+                scroll: 0,
+            });
         }
 
         self.refresh_primary()?;
@@ -437,10 +477,7 @@ impl App {
 
     fn do_delete(&mut self) -> Result<()> {
         let paths = self.primary.operative_entries();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        let results = rt.block_on(fs::delete_entries(&paths));
+        let results = self.rt.block_on(fs::delete_entries(&paths));
 
         let failures: Vec<String> = results
             .iter()
@@ -473,16 +510,17 @@ impl App {
 
         match modal {
             Modal::Confirm { selected, .. } => match key.code {
-                KeyCode::Left | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    *selected = ConfirmChoice::Yes;
-                    let confirmed = matches!(selected, ConfirmChoice::Yes);
-                    self.modal = None;
-                    if confirmed {
-                        self.do_delete()?;
-                    }
+                KeyCode::Left | KeyCode::Right => {
+                    *selected = match selected {
+                        ConfirmChoice::Yes => ConfirmChoice::No,
+                        ConfirmChoice::No  => ConfirmChoice::Yes,
+                    };
                 }
-                KeyCode::Right | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    self.modal = None;
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    *selected = ConfirmChoice::Yes;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    *selected = ConfirmChoice::No;
                 }
                 KeyCode::Enter => {
                     let is_yes = matches!(selected, ConfirmChoice::Yes);
@@ -490,6 +528,9 @@ impl App {
                     if is_yes {
                         self.do_delete()?;
                     }
+                }
+                KeyCode::Esc => {
+                    self.modal = None;
                 }
                 _ => {}
             },
@@ -519,8 +560,7 @@ impl App {
                 }
             }
 
-            Modal::Conflict { conflict } => {
-                use crossterm::event::KeyCode;
+            Modal::Conflict { conflict, response } => {
                 match key.code {
                     KeyCode::Left | KeyCode::Char('h') => {
                         conflict.selected = match conflict.selected {
@@ -538,11 +578,57 @@ impl App {
                             ConflictChoice::Abort     => ConflictChoice::Abort,
                         };
                     }
-                    KeyCode::Char('s') | KeyCode::Char('S') => { self.modal = None; }
-                    KeyCode::Char('o') | KeyCode::Char('O') => { self.modal = None; }
-                    KeyCode::Char('a') | KeyCode::Char('A') => { self.modal = None; }
-                    KeyCode::Esc => { self.modal = None; }
-                    KeyCode::Enter => { self.modal = None; }
+                    KeyCode::Char('s') | KeyCode::Char('S') => {
+                        if let Some(tx) = response.take() {
+                            let _ = tx.send(ConflictResolution::Skip);
+                        }
+                        self.modal = None;
+                    }
+                    KeyCode::Char('o') | KeyCode::Char('O') => {
+                        if let Some(tx) = response.take() {
+                            let _ = tx.send(ConflictResolution::Overwrite);
+                        }
+                        self.modal = None;
+                    }
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        if let Some(tx) = response.take() {
+                            let new_name = conflict.conflict.src.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            let _ = tx.send(ConflictResolution::Rename(new_name));
+                        }
+                        self.modal = None;
+                    }
+                    KeyCode::Char('a') | KeyCode::Char('A') => {
+                        if let Some(tx) = response.take() {
+                            let _ = tx.send(ConflictResolution::Abort);
+                        }
+                        self.modal = None;
+                    }
+                    KeyCode::Esc => {
+                        if let Some(tx) = response.take() {
+                            let _ = tx.send(ConflictResolution::Abort);
+                        }
+                        self.modal = None;
+                    }
+                    KeyCode::Enter => {
+                        if let Some(tx) = response.take() {
+                            let resolution = match conflict.selected {
+                                ConflictChoice::Skip      => ConflictResolution::Skip,
+                                ConflictChoice::Overwrite => ConflictResolution::Overwrite,
+                                ConflictChoice::Rename    => ConflictResolution::Rename(
+                                    conflict.conflict.src.file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .to_string(),
+                                ),
+                                ConflictChoice::Abort     => ConflictResolution::Abort,
+                            };
+                            let _ = tx.send(resolution);
+                        }
+                        self.modal = None;
+                    }
                     _ => {}
                 }
             }
@@ -613,24 +699,20 @@ impl App {
             return Ok(());
         }
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
         match title {
             "Rename" => {
                 if let Some(entry) = self.primary.focused_entry() {
                     let src = entry.path.clone();
-                    rt.block_on(fs::rename_entry(&src, value))?;
+                    self.rt.block_on(fs::rename_entry(&src, value))?;
                 }
             }
             "New File" => {
                 let cwd = self.primary.cwd.clone();
-                rt.block_on(fs::create_file(&cwd, value))?;
+                self.rt.block_on(fs::create_file(&cwd, value))?;
             }
             "New Directory" => {
                 let cwd = self.primary.cwd.clone();
-                rt.block_on(fs::create_dir(&cwd, value))?;
+                self.rt.block_on(fs::create_dir(&cwd, value))?;
             }
             _ => {}
         }
@@ -643,6 +725,7 @@ impl App {
         let old_cwd = self.primary.cwd.clone();
         let entries = read_dir(&path, self.show_hidden)?;
         self.primary = Pane::new(path.clone(), entries);
+        self.primary.clear_selection();
 
         // Update parent pane for Miller
         if matches!(self.layout, LayoutMode::Miller) {

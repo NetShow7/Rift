@@ -3,7 +3,6 @@ use chrono::{DateTime, Local};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,10 +52,10 @@ impl Entry {
 
         let size = if ft.is_file() { Some(metadata.len()) } else { None };
 
-        let modified = metadata
-            .modified()
-            .ok()
-            .map(|t: SystemTime| DateTime::<Local>::from(t));
+        let modified = metadata.modified().ok().and_then(|t| {
+            let duration = t.duration_since(std::time::UNIX_EPOCH).ok()?;
+            DateTime::from_timestamp(duration.as_secs() as i64, duration.subsec_nanos())
+        }).map(|utc: DateTime<chrono::Utc>| utc.with_timezone(&chrono::Local));
 
         #[cfg(unix)]
         let (permissions, is_executable) = {

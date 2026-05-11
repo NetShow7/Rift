@@ -83,17 +83,6 @@ impl Config {
             .with_context(|| format!("Failed to parse config at {}", path.display()))
     }
 
-    pub fn write_default(path: &PathBuf) -> Result<()> {
-        let default = Self::default();
-        let serialized = toml::to_string_pretty(&default)
-            .context("Failed to serialize default config")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, serialized)
-            .with_context(|| format!("Failed to write config to {}", path.display()))
-    }
-
     pub fn config_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))

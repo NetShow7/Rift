@@ -42,12 +42,12 @@ pub async fn copy_entries(
         } else {
             dst
         };
-        match std::fs::metadata(src).map(|m| m.is_dir()) {
-            Ok(true)  => match copy_dir_sync(src, &effective_dst) {
+        match fs::metadata(src).await.map(|m| m.is_dir()) {
+            Ok(true)  => match copy_dir(src, &effective_dst).await {
                 Ok(_)  => results.push(OpResult::Success { src: src.clone(), dst: effective_dst }),
                 Err(e) => results.push(OpResult::Failed  { src: src.clone(), error: e.to_string() }),
             },
-            _ => match std::fs::copy(src, &effective_dst) {
+            _ => match fs::copy(src, &effective_dst).await {
                 Ok(_)  => results.push(OpResult::Success { src: src.clone(), dst: effective_dst }),
                 Err(e) => results.push(OpResult::Failed  { src: src.clone(), error: e.to_string() }),
             },
@@ -56,16 +56,16 @@ pub async fn copy_entries(
     results
 }
 
-fn copy_dir_sync(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
+async fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst).await?;
+    let mut read_dir = fs::read_dir(src).await?;
+    while let Some(entry) = read_dir.next_entry().await? {
         let child_src = entry.path();
         let child_dst = dst.join(entry.file_name());
         if child_src.is_dir() {
-            copy_dir_sync(&child_src, &child_dst)?;
+            Box::pin(copy_dir(&child_src, &child_dst)).await?;
         } else {
-            std::fs::copy(&child_src, &child_dst)
+            fs::copy(&child_src, &child_dst).await
                 .with_context(|| format!("copy {} -> {}", child_src.display(), child_dst.display()))?;
         }
     }
@@ -106,14 +106,14 @@ async fn move_single(src: &Path, dst: &Path) -> Result<()> {
     if fs::rename(src, dst).await.is_ok() {
         return Ok(());
     }
-    copy_dir_sync(src, dst)?;
-    delete_path_sync(src)
+    copy_dir(src, dst).await?;
+    delete_path(src).await
 }
 
 pub async fn delete_entries(sources: &[PathBuf]) -> Vec<OpResult> {
     let mut results = Vec::new();
     for src in sources {
-        match delete_path_sync(src) {
+        match delete_path(src).await {
             Ok(_)  => results.push(OpResult::Success { src: src.clone(), dst: src.clone() }),
             Err(e) => results.push(OpResult::Failed  { src: src.clone(), error: e.to_string() }),
         }
@@ -121,12 +121,12 @@ pub async fn delete_entries(sources: &[PathBuf]) -> Vec<OpResult> {
     results
 }
 
-fn delete_path_sync(path: &Path) -> Result<()> {
+async fn delete_path(path: &Path) -> Result<()> {
     if path.is_dir() {
-        std::fs::remove_dir_all(path)
+        fs::remove_dir_all(path).await
             .with_context(|| format!("delete dir {}", path.display()))
     } else {
-        std::fs::remove_file(path)
+        fs::remove_file(path).await
             .with_context(|| format!("delete file {}", path.display()))
     }
 }

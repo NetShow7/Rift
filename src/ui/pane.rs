@@ -158,7 +158,8 @@ impl Pane {
                     theme.symbols.unselected.as_str()
                 };
 
-                let (icon, color) = entry_style(e, theme);
+                let icon = entry_icon(e, &theme.symbols);
+                let color = entry_color(e, theme);
 
                 let style = if is_sel {
                     Style::default()
@@ -192,21 +193,30 @@ impl Pane {
     }
 }
 
-fn entry_style(e: &Entry, theme: &Theme) -> (&'static str, ratatui::style::Color) {
+fn entry_icon<'a>(e: &Entry, symbols: &'a crate::config::theme::ThemeSymbols) -> &'a str {
     match &e.kind {
-        EntryKind::Directory => ("  ", theme.colors.directory.to_ratatui()),
-        EntryKind::Symlink { .. } => ("  ", theme.colors.symlink.to_ratatui()),
+        EntryKind::Directory => &symbols.dir_open,
+        EntryKind::Symlink { .. } => &symbols.symlink,
+        EntryKind::File => &symbols.file,
+        EntryKind::Special => &symbols.file,
+    }
+}
+
+fn entry_color(e: &Entry, theme: &Theme) -> ratatui::style::Color {
+    match &e.kind {
+        EntryKind::Directory => theme.colors.directory.to_ratatui(),
+        EntryKind::Symlink { .. } => theme.colors.symlink.to_ratatui(),
         EntryKind::File => {
             if e.is_archive() {
-                ("  ", theme.colors.archive.to_ratatui())
+                theme.colors.archive.to_ratatui()
             } else if e.is_media() {
-                ("  ", theme.colors.media.to_ratatui())
+                theme.colors.media.to_ratatui()
             } else if e.is_executable {
-                ("  ", theme.colors.executable.to_ratatui())
+                theme.colors.executable.to_ratatui()
             } else {
-                ("  ", theme.colors.foreground.to_ratatui())
+                theme.colors.foreground.to_ratatui()
             }
         }
-        EntryKind::Special => ("  ", theme.colors.foreground.to_ratatui()),
+        EntryKind::Special => theme.colors.foreground.to_ratatui(),
     }
 }
