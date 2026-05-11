@@ -203,8 +203,13 @@ impl App {
         } else {
             self.primary.focused_entry().cloned()
         };
-        let selected_count = self.primary.selected.len();
-        let filter = self.primary.filter.clone();
+        let active = if self.active_pane == 1 {
+            self.secondary.as_ref().unwrap_or(&self.primary)
+        } else {
+            &self.primary
+        };
+        let selected_count = active.selected.len();
+        let filter = active.filter.clone();
         let status_msg = self.status_message.as_ref().map(|(m, _)| m.as_str());
         // Resolve shortcut hints
         let show_hints = self.config.general.show_shortcut_hints;
@@ -963,7 +968,7 @@ impl App {
 
     fn navigate_to(&mut self, path: PathBuf) -> Result<()> {
         let old_cwd = self.primary.cwd.clone();
-        let threshold = self.config.general.scroll_threshold.min(5);
+        let threshold = self.config.general.scroll_threshold;
         let entries = read_dir(&path, self.show_hidden)?;
         self.primary = Pane::new(path.clone(), entries, threshold);
         self.primary.clear_selection();
@@ -994,7 +999,7 @@ impl App {
     }
 
     fn sync_secondary_pane(&mut self) -> Result<()> {
-        let threshold = self.config.general.scroll_threshold.min(5);
+        let threshold = self.config.general.scroll_threshold;
         match self.layout {
             LayoutMode::Dual => {
                 if self.secondary.is_none() {
