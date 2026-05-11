@@ -685,10 +685,7 @@ impl App {
                     }
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         if let Some(tx) = response.take() {
-                            let new_name = conflict.conflict.src.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string();
+                            let new_name = auto_rename(&conflict.conflict.dst);
                             let _ = tx.send(ConflictResolution::Rename(new_name));
                         }
                         self.modal = None;
@@ -711,10 +708,7 @@ impl App {
                                 ConflictChoice::Skip      => ConflictResolution::Skip,
                                 ConflictChoice::Overwrite => ConflictResolution::Overwrite,
                                 ConflictChoice::Rename    => ConflictResolution::Rename(
-                                    conflict.conflict.src.file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .to_string(),
+                                    auto_rename(&conflict.conflict.dst),
                                 ),
                                 ConflictChoice::Abort     => ConflictResolution::Abort,
                             };
