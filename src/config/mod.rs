@@ -46,6 +46,7 @@ pub struct GeneralConfig {
     pub shell_mode: ShellMode,
     pub confirm_delete: bool,
     pub trash_dir: Option<PathBuf>,
+    pub show_shortcut_hints: bool,
 }
 
 impl Default for GeneralConfig {
@@ -58,6 +59,7 @@ impl Default for GeneralConfig {
             shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
             shell_mode: ShellMode::default(),
             confirm_delete: true,
+            show_shortcut_hints: true,
             trash_dir: None,
         }
     }

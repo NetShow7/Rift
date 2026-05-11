@@ -12,6 +12,7 @@ shell = "/bin/bash"
 # How to run shell commands: "capture" (show output in pane) or "takeover" (give terminal)
 shell_mode = "capture"
 confirm_delete = true
+show_shortcut_hints = true
 # trash_dir = "~/.local/share/rift/trash"  # uncomment to enable trash instead of permanent delete
 
 [theme]

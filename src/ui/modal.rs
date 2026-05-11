@@ -1,4 +1,4 @@
-use crate::config::{Action, Config, KeyBinding, LayoutMode, ShellMode, theme::{BorderStyle, Color as RiftColor}};
+use crate::config::{Action, Config, KeyBinding, Keymap, LayoutMode, ShellMode, theme::{BorderStyle, Color as RiftColor}};
 use crate::fs::{Conflict, ConflictResolution};
 use std::sync::mpsc::Sender;
 use ratatui::{
@@ -37,7 +37,7 @@ pub enum Modal {
         scroll: usize,
     },
     /// Help overlay.
-    Help { scroll: usize },
+    Help { scroll: usize, keymap: Keymap },
 
     /// Settings panel.
     Settings(SettingsState),
@@ -117,7 +117,7 @@ pub fn draw_modal(frame: &mut Frame, modal: &Modal, area: Rect) {
         Modal::Summary { title, lines, scroll } => {
             draw_summary(frame, title, lines, *scroll, area)
         }
-        Modal::Help { scroll } => draw_help(frame, *scroll, area),
+        Modal::Help { scroll, keymap } => draw_help(frame, *scroll, keymap, area),
         Modal::Settings(state) => draw_settings(frame, state, area),
     }
 }
@@ -309,7 +309,7 @@ fn draw_summary(frame: &mut Frame, title: &str, lines: &[String], scroll: usize,
     frame.render_widget(Paragraph::new(visible), inner);
 }
 
-fn draw_help(frame: &mut Frame, scroll: usize, area: Rect) {
+fn draw_help(frame: &mut Frame, scroll: usize, keymap: &Keymap, area: Rect) {
     let rect = centered_rect(70, 30, area);
     frame.render_widget(Clear, rect);
 
@@ -322,53 +322,23 @@ fn draw_help(frame: &mut Frame, scroll: usize, area: Rect) {
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
-    let entries = vec![
-        ("Navigation", vec![
-            ("↑/↓ or k/j", "Move cursor"),
-            ("←/→ or h/l", "Go to parent / open"),
-            ("Enter",       "Open entry"),
-            ("PgUp/PgDn",   "Page scroll"),
-            ("g/G",         "Go to top / bottom"),
-        ]),
-        ("Selection", vec![
-            ("Space",   "Toggle selection"),
-            ("Ctrl+A",  "Select all"),
-            ("Escape",  "Clear selection"),
-        ]),
-        ("File operations", vec![
-            ("Ctrl+C", "Copy"),
-            ("Ctrl+X", "Cut"),
-            ("Ctrl+V", "Paste"),
-            ("Delete", "Delete"),
-            ("F2",     "Rename"),
-            ("Ctrl+N", "New file"),
-            ("Ctrl+Shift+N", "New directory"),
-        ]),
-        ("View", vec![
-            ("Ctrl+H", "Toggle hidden files"),
-            ("Ctrl+P", "Toggle preview"),
-            ("Tab",    "Cycle layout"),
-            ("r",      "Refresh"),
-        ]),
-        ("App", vec![
-            ("/",     "Search"),
-            ("f",     "Filter"),
-            ("q",     "Quit"),
-        ]),
-    ];
-
     let mut lines: Vec<Line> = Vec::new();
-    for (section, bindings) in &entries {
+    for (section, bindings) in help_sections() {
         lines.push(Line::from(Span::styled(
-            *section,
+            section,
             Style::default()
                 .fg(Color::Rgb(187, 154, 247))
                 .add_modifier(Modifier::BOLD),
         )));
-        for (key, desc) in bindings {
+        for (action, desc) in bindings {
+            let keys: Vec<&str> = keymap.0.iter()
+                .filter(|(_, v)| matches!(v, KeyBinding::Action(a) if *a == action))
+                .map(|(k, _)| k.as_str())
+                .collect();
+            let key_str = if keys.is_empty() { "—".into() } else { keys.join(", ") };
             lines.push(Line::from(vec![
-                Span::styled(format!("  {:20}", key), Style::default().fg(Color::Rgb(224, 175, 104))),
-                Span::raw(*desc),
+                Span::styled(format!("  {:20}", key_str), Style::default().fg(Color::Rgb(224, 175, 104))),
+                Span::raw(desc),
             ]));
         }
         lines.push(Line::raw(""));
@@ -376,6 +346,60 @@ fn draw_help(frame: &mut Frame, scroll: usize, area: Rect) {
 
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(inner.height as usize).collect();
     frame.render_widget(Paragraph::new(visible), inner);
+}
+
+fn help_sections() -> Vec<(&'static str, Vec<(Action, &'static str)>)> {
+    use Action::*;
+    vec![
+        ("Navigation", vec![
+            (MoveUp, "Move up"),
+            (MoveDown, "Move down"),
+            (MoveLeft, "Move left"),
+            (MoveRight, "Move right"),
+            (PageUp, "Page up"),
+            (PageDown, "Page down"),
+            (GotoTop, "Go to top"),
+            (GotoBottom, "Go to bottom"),
+            (OpenEntry, "Open entry"),
+            (GoParent, "Go to parent"),
+        ]),
+        ("Selection", vec![
+            (SelectToggle, "Toggle selection"),
+            (SelectAll, "Select all"),
+            (SelectNone, "Clear selection"),
+            (InvertSelection, "Invert selection"),
+        ]),
+        ("File Operations", vec![
+            (Copy, "Copy"),
+            (Cut, "Cut"),
+            (Paste, "Paste"),
+            (Delete, "Delete"),
+            (Rename, "Rename"),
+            (NewFile, "New file"),
+            (NewDir, "New directory"),
+        ]),
+        ("View", vec![
+            (ToggleHidden, "Toggle hidden"),
+            (TogglePreview, "Toggle preview"),
+            (CycleLayout, "Cycle layout"),
+            (SetLayoutSingle, "Layout: single"),
+            (SetLayoutDual, "Layout: dual"),
+            (SetLayoutMiller, "Layout: miller"),
+            (Refresh, "Refresh"),
+        ]),
+        ("Search / Filter", vec![
+            (Search, "Search"),
+            (Filter, "Filter"),
+            (ClearFilter, "Clear filter"),
+        ]),
+        ("App", vec![
+            (Help, "Help"),
+            (OpenSettings, "Settings"),
+            (OpenConfig, "Open config"),
+            (OpenShell, "Open shell"),
+            (Quit, "Quit"),
+        ]),
+    ]
 }
 
 // --- Settings panel -----------------------------------------------------------
@@ -402,6 +426,7 @@ pub enum SettingId {
     ShellMode,
     ConfirmDelete,
     TrashDir,
+    ShowShortcutHints,
     BorderStyle,
     ColorBackground,
     ColorForeground,
@@ -477,6 +502,7 @@ impl SettingsState {
                 TabItem::Setting(ShellMode),
                 TabItem::Setting(ConfirmDelete),
                 TabItem::Setting(TrashDir),
+                TabItem::Setting(ShowShortcutHints),
             ],
             SettingsTab::Theme => vec![
                 TabItem::Setting(BorderStyle),
@@ -578,6 +604,7 @@ impl SettingsState {
             TrashDir => self.config.general.trash_dir
                 .as_ref().map(|p| p.display().to_string())
                 .unwrap_or_else(|| "none".into()),
+            ShowShortcutHints => yesno(self.config.general.show_shortcut_hints),
             BorderStyle => format!("{:?}", self.config.theme.border_style).to_lowercase(),
             ColorForeground => color_val(&self.config.theme.colors.foreground),
             ColorBackground => color_val(&self.config.theme.colors.background),
@@ -627,7 +654,7 @@ impl SettingsState {
     fn activate_id(&mut self, id: &SettingId) {
         use SettingId::*;
         match id {
-            ShowHidden | FollowSymlinks | ConfirmDelete => {
+            ShowHidden | FollowSymlinks | ConfirmDelete | ShowShortcutHints => {
                 self.toggle_bool(id);
             }
             Layout | ShellMode | BorderStyle => {
@@ -653,6 +680,7 @@ impl SettingsState {
             ShowHidden => self.config.general.show_hidden = !self.config.general.show_hidden,
             FollowSymlinks => self.config.general.follow_symlinks = !self.config.general.follow_symlinks,
             ConfirmDelete => self.config.general.confirm_delete = !self.config.general.confirm_delete,
+            ShowShortcutHints => self.config.general.show_shortcut_hints = !self.config.general.show_shortcut_hints,
             _ => {}
         }
     }
@@ -954,6 +982,7 @@ fn id_label(id: &SettingId) -> &'static str {
         ShellMode => "Shell mode",
         ConfirmDelete => "Confirm delete",
         TrashDir => "Trash dir",
+        ShowShortcutHints => "Show shortcut hints",
         BorderStyle => "Border style",
         ColorForeground => "  Foreground",
         ColorBackground => "  Background",

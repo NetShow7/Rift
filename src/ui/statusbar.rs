@@ -23,6 +23,10 @@ impl StatusBar {
         has_clipboard: bool,
         clipboard_is_cut: bool,
         filter: Option<&str>,
+        show_shortcut_hints: bool,
+        key_help: Option<&str>,
+        key_quit: Option<&str>,
+        key_settings: Option<&str>,
     ) {
         let bg = theme.colors.statusbar_bg.to_ratatui();
         let fg = theme.colors.statusbar_fg.to_ratatui();
@@ -42,6 +46,23 @@ impl StatusBar {
                 format!("  [filter: {}]", f),
                 Style::default().fg(warn).bg(bg),
             ));
+        }
+
+        if show_shortcut_hints {
+            let dim = Style::default().fg(fg).bg(bg);
+            let key_style = Style::default().fg(accent).bg(bg);
+            if let Some(k) = key_help {
+                left.push(Span::styled(format!(" [{}]:", k), key_style));
+                left.push(Span::styled("Help", dim));
+            }
+            if let Some(k) = key_quit {
+                left.push(Span::styled(format!(" [{}]:", k), key_style));
+                left.push(Span::styled("Quit", dim));
+            }
+            if let Some(k) = key_settings {
+                left.push(Span::styled(format!(" [{}]:", k), key_style));
+                left.push(Span::styled("Settings", dim));
+            }
         }
 
         // Right side: selection count, clipboard, file info

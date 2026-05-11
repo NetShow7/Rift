@@ -21,6 +21,7 @@ pub fn key_to_string(event: &KeyEvent) -> String {
     }
 
     let key_name = match event.code {
+        KeyCode::Char(' ') => "space".to_string(),
         KeyCode::Char(c)   => c.to_string(),
         KeyCode::Enter     => "enter".to_string(),
         KeyCode::Backspace => "backspace".to_string(),
@@ -38,7 +39,6 @@ pub fn key_to_string(event: &KeyEvent) -> String {
         KeyCode::End       => "end".to_string(),
         KeyCode::Insert    => "insert".to_string(),
         KeyCode::F(n)      => format!("f{}", n),
-        KeyCode::Char(' ')     => "space".to_string(),
         _                  => return String::new(),
     };
 

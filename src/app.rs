@@ -104,6 +104,13 @@ impl App {
         })
     }
 
+    /// Find the key string bound to a built-in action, if any.
+    fn key_for_action(&self, action: &Action) -> Option<String> {
+        self.config.keymap.0.iter()
+            .find(|(_, v)| matches!(v, KeyBinding::Action(a) if a == action))
+            .map(|(k, _)| k.clone())
+    }
+
     pub fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         while self.running {
             terminal.draw(|frame| self.draw(frame))?;
@@ -162,6 +169,12 @@ impl App {
         // Draw status bar
         let selected_count = self.primary.selected.len();
         let filter = self.primary.filter.clone();
+        // Resolve shortcut hints
+        let show_hints = self.config.general.show_shortcut_hints;
+        let key_help = if show_hints { self.key_for_action(&Action::Help) } else { None };
+        let key_quit = if show_hints { self.key_for_action(&Action::Quit) } else { None };
+        let key_settings = if show_hints { self.key_for_action(&Action::OpenSettings) } else { None };
+
         StatusBar::draw(
             frame,
             layout_areas.statusbar,
@@ -172,6 +185,10 @@ impl App {
             self.clipboard.is_some(),
             self.clipboard.as_ref().map(|c| c.is_cut).unwrap_or(false),
             filter.as_deref(),
+            show_hints,
+            key_help.as_deref(),
+            key_quit.as_deref(),
+            key_settings.as_deref(),
         );
 
         // Draw modal on top
@@ -321,7 +338,8 @@ impl App {
             }
 
             Action::Help => {
-                self.modal = Some(Modal::Help { scroll: 0 });
+                let keymap = self.config.keymap.clone();
+                self.modal = Some(Modal::Help { scroll: 0, keymap });
             }
 
             Action::OpenSettings => {
@@ -718,7 +736,7 @@ impl App {
                 }
             }
 
-            Modal::Help { scroll } => {
+            Modal::Help { scroll, .. } => {
                 use crossterm::event::KeyCode;
                 match key.code {
                     KeyCode::Up   | KeyCode::Char('k') => { *scroll = scroll.saturating_sub(1); }
