@@ -365,10 +365,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn move_file_cross_device_fallback() {
-        // Simulate cross-device by using copy+delete path: rename will succeed
-        // within same tmpdir, so test the copy path directly via move_entries
-        // with a file (not a dir) to ensure it doesn't use copy_dir.
+    async fn move_file_between_tmpdirs() {
+        // Both TempDirs are on the same filesystem so rename() succeeds;
+        // this validates the happy path of move_entries for a plain file.
+        // The cross-device fallback (fs::copy + delete) is exercised by the
+        // copy_dir and fs::copy code paths which are tested separately above.
         let src_dir = TempDir::new().unwrap();
         let dst_dir = TempDir::new().unwrap();
         let file = src_dir.path().join("cross.txt");

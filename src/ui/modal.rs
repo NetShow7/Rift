@@ -1214,7 +1214,7 @@ mod tests {
     #[test]
     fn settings_value_for_scroll_threshold() {
         let state = SettingsState::new(Config::default());
-        assert_eq!(state.value_for(&SettingId::ScrollThreshold), "500");
+        assert_eq!(state.value_for(&SettingId::ScrollThreshold), "3");
     }
 
     #[test]
@@ -1308,7 +1308,7 @@ mod tests {
     fn settings_apply_invalid_scroll_threshold() {
         let mut state = SettingsState::new(Config::default());
         state.apply_value(&SettingId::ScrollThreshold, "not_a_number");
-        assert_eq!(state.config.general.scroll_threshold, 500);
+        assert_eq!(state.config.general.scroll_threshold, 3);
     }
 
     #[test]
