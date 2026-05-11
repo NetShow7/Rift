@@ -49,6 +49,7 @@ pub enum Action {
     // App
     OpenConfig,
     OpenShell,
+    OpenSettings,
     Quit,
     Help,
 }
@@ -119,6 +120,7 @@ impl Default for Keymap {
         m.insert("ctrl+t".into(),      KeyBinding::Shell("$SHELL".into()));
 
         // App
+        m.insert("ctrl+.".into(),      KeyBinding::Action(Action::OpenSettings));
         m.insert("?".into(),           KeyBinding::Action(Action::Help));
         m.insert("q".into(),           KeyBinding::Action(Action::Quit));
         m.insert("ctrl+q".into(),      KeyBinding::Action(Action::Quit));

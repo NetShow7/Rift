@@ -5,7 +5,7 @@ use crate::{
     shell,
     ui::{
         compute_layout, draw_modal, draw_preview,
-        modal::{ConflictChoice, ConfirmChoice},
+        modal::{ConflictChoice, ConfirmChoice, SettingsEdit, SettingsState, SettingsTab},
         Modal, Pane, StatusBar,
     },
 };
@@ -322,6 +322,13 @@ impl App {
 
             Action::Help => {
                 self.modal = Some(Modal::Help { scroll: 0 });
+            }
+
+            Action::OpenSettings => {
+                // Sync live app state into config before editing
+                self.config.general.layout = self.layout.clone();
+                self.config.general.show_hidden = self.show_hidden;
+                self.modal = Some(Modal::Settings(SettingsState::new(self.config.clone())));
             }
 
             Action::Quit => {
@@ -717,6 +724,107 @@ impl App {
                     KeyCode::Up   | KeyCode::Char('k') => { *scroll = scroll.saturating_sub(1); }
                     KeyCode::Down | KeyCode::Char('j') => { *scroll += 1; }
                     KeyCode::Esc  | KeyCode::Char('q') | KeyCode::Char('?') => { self.modal = None; }
+                    _ => {}
+                }
+            }
+
+            Modal::Settings(state) => {
+                // Capture mode: next keypress binds to action
+                if state.capturing.is_some() {
+                    let key_str = crate::input::key_to_string(&key);
+                    if !key_str.is_empty() {
+                        state.apply_capture(&key_str);
+                    } else {
+                        state.capturing = None;
+                    }
+                    return Ok(());
+                }
+
+                // Inline text editing
+                if let Some(ref mut edit) = state.editing {
+                    let SettingsEdit::Text { value, cursor } = edit;
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            value.insert(*cursor, c);
+                            *cursor += 1;
+                        }
+                        KeyCode::Backspace => {
+                            if *cursor > 0 {
+                                *cursor -= 1;
+                                value.remove(*cursor);
+                            }
+                        }
+                        KeyCode::Left => {
+                            *cursor = cursor.saturating_sub(1);
+                        }
+                        KeyCode::Right => {
+                            *cursor = (*cursor + 1).min(value.len());
+                        }
+                        KeyCode::Enter => {
+                            let val = value.clone();
+                            state.apply_edit(&val);
+                            state.editing = None;
+                        }
+                        KeyCode::Esc => {
+                            state.editing = None;
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                // Normal navigation within settings
+                match key.code {
+                    KeyCode::Tab | KeyCode::Char('\t') => {
+                        state.tab = match state.tab {
+                            SettingsTab::General => SettingsTab::Theme,
+                            SettingsTab::Theme => SettingsTab::Keymap,
+                            SettingsTab::Keymap => SettingsTab::General,
+                        };
+                        state.cursor = 0;
+                        state.scroll = 0;
+                    }
+                    KeyCode::BackTab => {
+                        state.tab = match state.tab {
+                            SettingsTab::General => SettingsTab::Keymap,
+                            SettingsTab::Theme => SettingsTab::General,
+                            SettingsTab::Keymap => SettingsTab::Theme,
+                        };
+                        state.cursor = 0;
+                        state.scroll = 0;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if state.cursor > 0 {
+                            state.cursor -= 1;
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if state.cursor < state.max_cursor() {
+                            state.cursor += 1;
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        state.activate();
+                    }
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        let changed = state.changed;
+                        let config = state.config.clone();
+                        self.modal = None;
+                        if changed {
+                            let old_hidden = self.show_hidden;
+                            let old_layout = self.layout.clone();
+                            self.config = config;
+                            let _ = self.config.save();
+                            if self.config.general.show_hidden != old_hidden {
+                                self.show_hidden = self.config.general.show_hidden;
+                                self.refresh_primary()?;
+                            }
+                            if self.config.general.layout != old_layout {
+                                self.layout = self.config.general.layout.clone();
+                                self.sync_secondary_pane()?;
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }

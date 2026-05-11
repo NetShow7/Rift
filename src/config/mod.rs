@@ -83,6 +83,16 @@ impl Config {
             .with_context(|| format!("Failed to parse config at {}", path.display()))
     }
 
+    pub fn save(&self) -> Result<()> {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let raw = toml::to_string_pretty(&self)?;
+        std::fs::write(&path, raw)?;
+        Ok(())
+    }
+
     pub fn config_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
