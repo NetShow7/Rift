@@ -1,12 +1,12 @@
 use crate::{
-    config::{Action, Config, KeyBinding, LayoutMode, ShellMode},
-    fs::{self, read_dir, Conflict, ConflictResolution, OpResult},
+        config::{Action, Config, KeyBinding, LayoutMode, ShellMode},
+    fs::{self, mounts, read_dir, Conflict, ConflictResolution, OpResult},
     input::key_to_string,
     shell,
     ui::{
         compute_layout, draw_modal, draw_preview,
         modal::{ConflictChoice, ConfirmChoice, SettingsEdit, SettingsState, SettingsTab},
-        InputIntent, Modal, Pane, PreviewCache, StatusBar,
+        AnimState, InputIntent, Modal, Pane, PreviewCache, SidebarState, StatusBar,
     },
 };
 use anyhow::Result;
@@ -57,6 +57,8 @@ pub struct App {
     pub input_mode: InputMode,
 
     pub running: bool,
+    pub sidebar: SidebarState,
+    pub sidebar_focused: bool,
     pub rt: tokio::runtime::Runtime,
     pub preview_cache: PreviewCache,
     /// Transient one-line message shown in the status bar (auto-clears after 2 s).
@@ -90,6 +92,11 @@ impl App {
             .enable_all()
             .build()?;
 
+        let mut sidebar = SidebarState::new(config.sidebar.width);
+        sidebar.favorites = config.sidebar.favorites.clone();
+        sidebar.drives = mounts::get_physical_mounts();
+        sidebar.can_peek = true;
+
         Ok(Self {
             layout,
             show_preview: true,
@@ -103,6 +110,8 @@ impl App {
             modal: None,
             input_mode: InputMode::Normal,
             running: true,
+            sidebar,
+            sidebar_focused: false,
             config,
             rt,
             preview_cache: PreviewCache::new(),
@@ -145,15 +154,15 @@ impl App {
                 }
             }
 
+            self.sidebar.tick();
+
             terminal.draw(|frame| self.draw(frame))?;
 
             self.check_pending_paste()?;
 
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        self.handle_key(key)?;
-                    }
+                    self.handle_key(key)?;
                 }
             }
         }
@@ -162,7 +171,8 @@ impl App {
 
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let area = frame.size();
-        let layout_areas = compute_layout(area, &self.layout, self.show_preview);
+        let sidebar_width = self.sidebar.current_width();
+        let layout_areas = compute_layout(area, &self.layout, self.show_preview, sidebar_width, &self.config.sidebar.position);
 
         // Draw parent pane (Miller left column)
         if let (Some(parent), Some(parent_area)) = (&mut self.parent, layout_areas.panes.first().copied()) {
@@ -234,6 +244,11 @@ impl App {
             key_settings.as_deref(),
         );
 
+        // Draw sidebar
+        if let Some(sidebar_area) = layout_areas.sidebar {
+            crate::ui::sidebar::render_sidebar(frame, sidebar_area, &self.sidebar, &self.config.theme);
+        }
+
         // Draw modal on top
         if let Some(modal) = &self.modal {
             draw_modal(frame, modal, area);
@@ -253,9 +268,18 @@ impl App {
             InputMode::Normal | InputMode::AwaitingModal => {}
         }
 
+        if self.sidebar_focused && self.sidebar.current_width() > 0 {
+            let key_str = key_to_string(&key);
+            return self.handle_sidebar_key(key_str, key);
+        }
+
         let key_str = key_to_string(&key);
         if key_str.is_empty() {
             return Ok(());
+        }
+
+        if key_str == "ctrl+b" {
+            return self.handle_peek_key(key);
         }
 
         if let Some(binding) = self.config.keymap.get(&key_str).cloned() {
@@ -265,6 +289,76 @@ impl App {
             }
         }
 
+        Ok(())
+    }
+
+    fn handle_sidebar_key(&mut self, key_str: String, _key: crossterm::event::KeyEvent) -> Result<()> {
+        let fl = self.sidebar.favorites.len();
+        let dl = self.sidebar.drives.len();
+        match key_str.as_str() {
+            "up" | "k" => {
+                self.sidebar.cursor_up(fl, dl);
+            }
+            "down" | "j" => {
+                self.sidebar.cursor_down(fl, dl);
+            }
+            "enter" => {
+                if let Some(pick) = self.sidebar.selected_path(fl).map(|s| s.to_string()) {
+                    let expanded = if pick.starts_with('~') {
+                        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+                        pick.replacen('~', &home, 1)
+                    } else {
+                        pick.clone()
+                    };
+                    let p = std::path::PathBuf::from(expanded);
+                    if p.exists() {
+                        self.navigate_to(p)?;
+                    } else {
+                        self.status_message = Some((
+                            format!("Directory not found: {}", pick),
+                            std::time::Instant::now(),
+                        ));
+                    }
+                }
+            }
+            "escape" | "ctrl+b" => {
+                self.sidebar.toggle();
+                self.sidebar_focused = false;
+                self.sidebar.sidebar_focused = false;
+            }
+            "r" => {
+                self.sidebar.drives = mounts::get_physical_mounts();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_peek_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
+        match key.kind {
+            KeyEventKind::Press => {
+                self.sidebar.debounce_start = Some(std::time::Instant::now());
+                self.sidebar.can_peek = true;
+            }
+            KeyEventKind::Repeat => {
+                if !self.sidebar.peek_held && !self.sidebar.is_animating() {
+                    self.sidebar.start_peek();
+                }
+            }
+            KeyEventKind::Release => {
+                self.sidebar.end_peek();
+                if !self.sidebar.peek_held {
+                    let was_tap = self.sidebar
+                        .debounce_start
+                        .map(|t| t.elapsed() < std::time::Duration::from_millis(150))
+                        .unwrap_or(true);
+                    if was_tap {
+                        self.dispatch_action(Action::ToggleSidebar)?;
+                    }
+                }
+                self.sidebar.debounce_start = None;
+            }
+        }
         Ok(())
     }
 
@@ -382,6 +476,18 @@ impl App {
             Action::SetLayoutMiller => { self.layout = LayoutMode::Miller; self.sync_secondary_pane()?; }
 
             Action::Refresh => self.refresh_primary()?,
+
+            Action::ToggleSidebar => {
+                self.sidebar.toggle();
+                if matches!(self.sidebar.anim, AnimState::Opening { .. }) {
+                    self.sidebar_focused = true;
+                    self.sidebar.sidebar_focused = true;
+                    self.sidebar.drives = mounts::get_physical_mounts();
+                } else {
+                    self.sidebar_focused = false;
+                    self.sidebar.sidebar_focused = false;
+                }
+            }
 
             Action::Search => {
                 self.input_mode = InputMode::Search(String::new());
