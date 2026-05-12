@@ -1,5 +1,3 @@
-use crate::config::SidebarPosition;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarSection {
     Favorites,
@@ -12,7 +10,6 @@ pub enum AnimState {
     Opening { current_width: u16, frame: u8 },
     Open,
     Closing { current_width: u16, frame: u8 },
-    Peeking { current_width: u16 },
 }
 
 pub struct SidebarState {
@@ -22,9 +19,6 @@ pub struct SidebarState {
     pub section: SidebarSection,
     pub favorites: Vec<String>,
     pub drives: Vec<String>,
-    pub can_peek: bool,
-    pub peek_held: bool,
-    pub debounce_start: Option<std::time::Instant>,
     pub sidebar_focused: bool,
 }
 
@@ -37,16 +31,13 @@ impl SidebarState {
             section: SidebarSection::Favorites,
             favorites: Vec::new(),
             drives: Vec::new(),
-            can_peek: true,
-            peek_held: false,
-            debounce_start: None,
             sidebar_focused: false,
         }
     }
 
     pub fn toggle(&mut self) {
         match self.anim {
-            AnimState::Closed | AnimState::Peeking { .. } => {
+            AnimState::Closed => {
                 let cw = self.current_width();
                 self.anim = AnimState::Opening { current_width: cw.max(1), frame: 0 };
             }
@@ -54,23 +45,6 @@ impl SidebarState {
                 let cw = self.current_width();
                 self.anim = AnimState::Closing { current_width: cw, frame: 0 };
             }
-        }
-        self.peek_held = false;
-    }
-
-    pub fn start_peek(&mut self) {
-        if !self.can_peek { return; }
-        self.peek_held = true;
-        if matches!(self.anim, AnimState::Closed) {
-            let cw = self.current_width();
-            self.anim = AnimState::Opening { current_width: cw.max(1), frame: 0 };
-        }
-    }
-
-    pub fn end_peek(&mut self) {
-        self.peek_held = false;
-        if let AnimState::Peeking { current_width } = self.anim {
-            self.anim = AnimState::Closing { current_width, frame: 0 };
         }
     }
 
@@ -84,7 +58,6 @@ impl SidebarState {
             AnimState::Opening { current_width, .. } => current_width,
             AnimState::Open => self.target_width,
             AnimState::Closing { current_width, .. } => current_width,
-            AnimState::Peeking { current_width } => current_width,
         }
     }
 
@@ -133,25 +106,13 @@ impl SidebarState {
     pub fn tick(&mut self) {
         const OPEN_STEP: u16 = 7;
         const CLOSE_STEP: u16 = 14;
-        const PEEK_STEP: u16 = 10;
-        const PEEK_MAX_WIDTH: u16 = 12;
 
         match self.anim {
             AnimState::Opening { ref mut current_width, ref mut frame } => {
-                let step = if self.peek_held { PEEK_STEP } else { OPEN_STEP };
-                let target = if self.peek_held {
-                    PEEK_MAX_WIDTH.min(self.target_width)
-                } else {
-                    self.target_width
-                };
-                *current_width = (*current_width + step).min(target);
+                *current_width = (*current_width + OPEN_STEP).min(self.target_width);
                 *frame += 1;
-                if *current_width >= target {
-                    self.anim = if self.peek_held {
-                        AnimState::Peeking { current_width: *current_width }
-                    } else {
-                        AnimState::Open
-                    };
+                if *current_width >= self.target_width {
+                    self.anim = AnimState::Open;
                 }
             }
             AnimState::Closing { ref mut current_width, ref mut frame } => {
@@ -159,11 +120,6 @@ impl SidebarState {
                 *frame += 1;
                 if *current_width == 0 {
                     self.anim = AnimState::Closed;
-                }
-            }
-            AnimState::Peeking { ref mut current_width } => {
-                if !self.peek_held {
-                    self.anim = AnimState::Closing { current_width: *current_width, frame: 0 };
                 }
             }
             _ => {}
@@ -228,26 +184,6 @@ mod tests {
         s.tick();
         assert_eq!(s.current_width(), 14);
         // Tick 2: 14-14=0
-        s.tick();
-        assert_eq!(s.current_width(), 0);
-        assert_eq!(s.anim, AnimState::Closed);
-    }
-
-    #[test]
-    fn peek_open_and_release() {
-        let mut s = SidebarState::new(28);
-        s.start_peek();
-        assert!(s.peek_held);
-        assert!(matches!(s.anim, AnimState::Opening { .. }));
-        // Tick x2 to reach PEEK_MAX_WIDTH (12)
-        s.tick();
-        s.tick();
-        // Should be at PEEK_MAX_WIDTH or close (step=10, so 1+10=11, 11+10=21 cap at 12)
-        // Actually: Opening(1) → tick(11) → Opening(11) → tick(cap at 12) → Peeking(12)
-        assert!(matches!(s.anim, AnimState::Peeking { .. }));
-        assert_eq!(s.current_width(), 12);
-        s.end_peek();
-        assert!(matches!(s.anim, AnimState::Closing { .. }));
         s.tick();
         assert_eq!(s.current_width(), 0);
         assert_eq!(s.anim, AnimState::Closed);
@@ -446,6 +382,56 @@ fn render_handle(frame: &mut Frame, area: Rect, theme: &Theme) {
         .style(Style::default().fg(bg).bg(handle_color))
         .block(block);
     frame.render_widget(label, area);
+}
+
+/// Draw a collapsed sidebar indicator: a thin vertical line at the sidebar edge
+/// with a vertical keybinding hint. Only drawn when sidebar is fully closed.
+pub fn render_collapsed_indicator(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    sidebar_on_left: bool,
+    keybinding: Option<&str>,
+) {
+    let border_color = theme.colors.border_inactive.to_ratatui();
+    let bg = theme.colors.background.to_ratatui();
+
+    let block = Block::default()
+        .borders(if sidebar_on_left { Borders::RIGHT } else { Borders::LEFT })
+        .border_style(Style::default().fg(border_color))
+        .bg(bg);
+    frame.render_widget(block, area);
+
+    // Show vertical keybinding hint in the column next to the border
+    if area.width > 1 {
+        let hint_x = if sidebar_on_left { area.x } else { area.x + 1 };
+        let hint_area = Rect { x: hint_x, y: area.y, width: area.width - 1, height: area.height };
+        render_vertical_text(frame, hint_area, keybinding.unwrap_or("▸"), border_color, bg);
+    }
+}
+
+/// Render text vertically, one character per row, centered vertically in the area.
+fn render_vertical_text(frame: &mut Frame, area: Rect, text: &str, fg: ratatui::style::Color, bg: ratatui::style::Color) {
+    let style = Style::default().fg(fg).bg(bg);
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len() as u16;
+    let start_y = if len >= area.height {
+        area.y
+    } else {
+        area.y + ((area.height - len) / 2)
+    };
+
+    for (i, &ch) in chars.iter().enumerate() {
+        let y = start_y + i as u16;
+        if y >= area.y + area.height {
+            break;
+        }
+        let cell = Rect { x: area.x, y, width: 1, height: 1 };
+        frame.render_widget(
+            Paragraph::new(Line::from(ch.to_string())).style(style),
+            cell,
+        );
+    }
 }
 
 fn abbreviate_path(path: &str, max_width: usize) -> String {

@@ -70,8 +70,19 @@ pub enum KeyBinding {
 /// [keymap]
 /// "ctrl+c" = "copy"
 /// "ctrl+e" = "shell:$EDITOR {}"
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Keymap(pub HashMap<String, KeyBinding>);
+
+// Custom Deserialize: start with default keymap, overlay user overrides on top.
+// This way users only need to specify the bindings they want to change.
+impl<'de> Deserialize<'de> for Keymap {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let user_overrides = HashMap::<String, KeyBinding>::deserialize(d)?;
+        let mut merged = Keymap::default().0;
+        merged.extend(user_overrides);
+        Ok(Keymap(merged))
+    }
+}
 
 impl Default for Keymap {
     fn default() -> Self {
@@ -114,6 +125,7 @@ impl Default for Keymap {
         m.insert("ctrl+l".into(),      KeyBinding::Action(Action::CycleLayout));
         m.insert("r".into(),           KeyBinding::Action(Action::Refresh));
         m.insert("ctrl+b".into(),     KeyBinding::Action(Action::ToggleSidebar));
+        m.insert("f1".into(),        KeyBinding::Action(Action::ToggleSidebar));
 
         // Search
         m.insert("/".into(),           KeyBinding::Action(Action::Search));
