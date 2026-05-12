@@ -35,6 +35,41 @@ impl Default for ShellMode {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarPosition {
+    Left,
+    Right,
+}
+
+impl Default for SidebarPosition {
+    fn default() -> Self {
+        Self::Left
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SidebarConfig {
+    pub position: SidebarPosition,
+    pub width: u16,
+    pub favorites: Vec<String>,
+}
+
+impl Default for SidebarConfig {
+    fn default() -> Self {
+        Self {
+            position: SidebarPosition::default(),
+            width: 28,
+            favorites: vec![
+                "~/Projects".into(),
+                "~/Documents".into(),
+                "~/Downloads".into(),
+            ],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GeneralConfig {
@@ -69,6 +104,7 @@ impl Default for GeneralConfig {
 #[serde(default)]
 pub struct Config {
     pub general: GeneralConfig,
+    pub sidebar: SidebarConfig,
     pub theme: Theme,
     pub keymap: Keymap,
 }
