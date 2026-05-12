@@ -95,7 +95,6 @@ impl App {
         let mut sidebar = SidebarState::new(config.sidebar.width);
         sidebar.favorites = config.sidebar.favorites.clone();
         sidebar.drives = mounts::get_physical_mounts();
-        sidebar.can_peek = true;
 
         Ok(Self {
             layout,
@@ -172,7 +171,14 @@ impl App {
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let area = frame.size();
         let sidebar_width = self.sidebar.current_width();
-        let layout_areas = compute_layout(area, &self.layout, self.show_preview, sidebar_width, &self.config.sidebar.position);
+
+        // Reserve 2 cols for collapsed indicator when sidebar fully closed
+        let effective_sidebar_width = if sidebar_width == 0 && !self.sidebar.is_animating() {
+            2
+        } else {
+            sidebar_width
+        };
+        let layout_areas = compute_layout(area, &self.layout, self.show_preview, effective_sidebar_width, &self.config.sidebar.position);
 
         // Draw parent pane (Miller left column)
         if let (Some(parent), Some(parent_area)) = (&mut self.parent, layout_areas.panes.first().copied()) {
@@ -183,20 +189,21 @@ impl App {
         }
 
         // Draw primary pane
+        let sidebar_focused = self.sidebar_focused;
         let primary_area = if matches!(self.layout, LayoutMode::Miller) {
             layout_areas.panes.get(1).copied().unwrap_or(layout_areas.panes[0])
         } else {
             layout_areas.panes[0]
         };
 
-        self.primary.is_active = self.active_pane == 0;
+        self.primary.is_active = self.active_pane == 0 && !sidebar_focused;
         let cwd_title = self.primary.cwd.display().to_string();
         self.primary.draw(frame, primary_area, &self.config.theme, &cwd_title);
 
         // Draw secondary pane (Dual)
         if let (Some(secondary), Some(sec_area)) = (&mut self.secondary, layout_areas.panes.get(1).copied()) {
             if matches!(self.layout, LayoutMode::Dual) {
-                secondary.is_active = self.active_pane == 1;
+                secondary.is_active = self.active_pane == 1 && !sidebar_focused;
                 let sec_title = secondary.cwd.display().to_string();
                 secondary.draw(frame, sec_area, &self.config.theme, &sec_title);
             }
@@ -244,9 +251,20 @@ impl App {
             key_settings.as_deref(),
         );
 
-        // Draw sidebar
+        // Draw sidebar or collapsed indicator
         if let Some(sidebar_area) = layout_areas.sidebar {
-            crate::ui::sidebar::render_sidebar(frame, sidebar_area, &self.sidebar, &self.config.theme);
+            if sidebar_width > 0 || self.sidebar.is_animating() {
+                crate::ui::sidebar::render_sidebar(frame, sidebar_area, &self.sidebar, &self.config.theme);
+            } else {
+                let toggle_key = self.key_for_action(&Action::ToggleSidebar);
+                crate::ui::sidebar::render_collapsed_indicator(
+                    frame,
+                    sidebar_area,
+                    &self.config.theme,
+                    self.config.sidebar.position == crate::config::SidebarPosition::Left,
+                    toggle_key.as_deref(),
+                );
+            }
         }
 
         // Draw modal on top
@@ -261,6 +279,15 @@ impl App {
             return self.handle_modal_key(key);
         }
 
+        let key_str = key_to_string(&key);
+
+        // Only process Press events — crossterm generates both Press and
+        // Release for each keystroke, which would cause every action to
+        // fire twice (navigation, text input, sidebar movement, …).
+        if key.kind != KeyEventKind::Press {
+            return Ok(());
+        }
+
         match &self.input_mode {
             InputMode::Search(_) | InputMode::Filter(_) => {
                 return self.handle_text_input(key);
@@ -269,17 +296,11 @@ impl App {
         }
 
         if self.sidebar_focused && self.sidebar.current_width() > 0 {
-            let key_str = key_to_string(&key);
             return self.handle_sidebar_key(key_str, key);
         }
 
-        let key_str = key_to_string(&key);
         if key_str.is_empty() {
             return Ok(());
-        }
-
-        if key_str == "ctrl+b" {
-            return self.handle_peek_key(key);
         }
 
         if let Some(binding) = self.config.keymap.get(&key_str).cloned() {
@@ -321,7 +342,7 @@ impl App {
                     }
                 }
             }
-            "escape" | "ctrl+b" => {
+            "escape" | "ctrl+b" | "f1" => {
                 self.sidebar.toggle();
                 self.sidebar_focused = false;
                 self.sidebar.sidebar_focused = false;
@@ -330,34 +351,6 @@ impl App {
                 self.sidebar.drives = mounts::get_physical_mounts();
             }
             _ => {}
-        }
-        Ok(())
-    }
-
-    fn handle_peek_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
-        match key.kind {
-            KeyEventKind::Press => {
-                self.sidebar.debounce_start = Some(std::time::Instant::now());
-                self.sidebar.can_peek = true;
-            }
-            KeyEventKind::Repeat => {
-                if !self.sidebar.peek_held && !self.sidebar.is_animating() {
-                    self.sidebar.start_peek();
-                }
-            }
-            KeyEventKind::Release => {
-                self.sidebar.end_peek();
-                if !self.sidebar.peek_held {
-                    let was_tap = self.sidebar
-                        .debounce_start
-                        .map(|t| t.elapsed() < std::time::Duration::from_millis(150))
-                        .unwrap_or(true);
-                    if was_tap {
-                        self.dispatch_action(Action::ToggleSidebar)?;
-                    }
-                }
-                self.sidebar.debounce_start = None;
-            }
         }
         Ok(())
     }
@@ -762,6 +755,12 @@ impl App {
 
     fn handle_modal_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
         use crossterm::event::KeyCode;
+
+        // Only process Press events — crossterm generates Press and Release
+        // for each keystroke, which would cause every action to fire twice.
+        if key.kind != KeyEventKind::Press {
+            return Ok(());
+        }
 
         let Some(modal) = &mut self.modal else { return Ok(()) };
 
