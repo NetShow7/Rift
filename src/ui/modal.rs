@@ -1061,6 +1061,7 @@ fn id_label(id: &SettingId) -> &'static str {
                 Quit => "Quit",
                 Help => "Help",
                 SwitchPane => "Switch pane",
+                ToggleSidebar => "Toggle sidebar",
             }
         }
     }

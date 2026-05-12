@@ -41,6 +41,7 @@ pub enum Action {
     SetLayoutDual,
     SetLayoutMiller,
     Refresh,
+    ToggleSidebar,
 
     // Search / filter
     Search,
@@ -112,6 +113,7 @@ impl Default for Keymap {
         m.insert("tab".into(),         KeyBinding::Action(Action::SwitchPane));
         m.insert("ctrl+l".into(),      KeyBinding::Action(Action::CycleLayout));
         m.insert("r".into(),           KeyBinding::Action(Action::Refresh));
+        m.insert("ctrl+b".into(),     KeyBinding::Action(Action::ToggleSidebar));
 
         // Search
         m.insert("/".into(),           KeyBinding::Action(Action::Search));
@@ -149,7 +151,7 @@ mod tests {
             OpenEntry, GoParent,
             SelectToggle, SelectAll, SelectNone,
             Copy, Cut, Paste, Delete, Rename, NewFile, NewDir,
-            ToggleHidden, TogglePreview, CycleLayout, Refresh,
+            ToggleHidden, TogglePreview, CycleLayout, Refresh, ToggleSidebar,
             Search, Filter, OpenSettings, Quit, Help,
         ]
     }
