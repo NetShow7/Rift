@@ -1,4 +1,5 @@
 pub mod entry;
+pub mod mounts;
 pub mod ops;
 pub mod watcher;
 
