@@ -1107,6 +1107,11 @@ impl App {
         self.primary = Pane::new(path.clone(), entries, threshold);
         self.primary.clear_selection();
 
+        if let Some(idx) = self.primary.entries.iter().position(|e| e.path == old_cwd) {
+            self.primary.cursor = idx;
+            self.primary.list_state.select(Some(idx));
+        }
+
         // Update parent pane for Miller
         if matches!(self.layout, LayoutMode::Miller) {
             self.parent = build_parent_pane(&path, self.show_hidden, threshold);
