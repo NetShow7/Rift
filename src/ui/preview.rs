@@ -101,7 +101,12 @@ fn load_content(entry: &crate::fs::Entry) -> PreviewContent {
 }
 
 pub fn draw_preview(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, cache: &PreviewCache) {
-    use ratatui::{style::{Color, Style}, widgets::{Block, BorderType, Paragraph}};
+    use ratatui::{
+        style::{Color, Style},
+        text::{Line, Span},
+        widgets::{Block, BorderType, Paragraph},
+    };
+    use crate::ui::syntax_highlighter;
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -123,6 +128,25 @@ pub fn draw_preview(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, cac
             (lines, Color::Rgb(122, 162, 247))
         }
         PreviewContent::Text(s) => {
+            let max_lines = inner.height as usize;
+            let highlighted = syntax_highlighter::highlight_text(s, cache.path.as_deref());
+            let styled_lines: Vec<Line> = highlighted
+                .into_iter()
+                .take(max_lines)
+                .map(|fragments| {
+                    Line::from(
+                        fragments
+                            .into_iter()
+                            .map(|(style, text)| Span::styled(text, style))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+
+            if !styled_lines.is_empty() {
+                frame.render_widget(Paragraph::new(styled_lines), inner);
+                return;
+            }
             let lines: String = s.lines()
                 .take(inner.height as usize)
                 .collect::<Vec<_>>()
