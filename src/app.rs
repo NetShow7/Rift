@@ -533,14 +533,12 @@ impl App {
             Action::OpenEditor => {
                 if let Some(entry) = self.active_pane_mut().focused_entry().cloned() {
                     if !entry.is_dir() {
-                        let path = entry.path;
-                        let quoted = format!("'{}'", path.to_string_lossy().replace('\'', r"'\''"));
-                        let cmd = format!("{} {}", self.config.general.editor, quoted);
+                        let path_str = entry.path.to_string_lossy().to_string();
                         let cwd = self.primary.cwd.clone();
-                        let shell_bin = self.config.general.shell.clone();
+                        let editor = self.config.general.editor.clone();
                         crossterm::terminal::disable_raw_mode()?;
                         crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
-                        shell::run_takeover(&shell_bin, &cmd, &cwd).ok();
+                        shell::run_direct(&editor, &[&path_str], &cwd).ok();
                         crossterm::terminal::enable_raw_mode()?;
                         crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
                         self.needs_clear = true;

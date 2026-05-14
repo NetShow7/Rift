@@ -36,6 +36,21 @@ pub async fn run_capture(shell: &str, cmd: &str, cwd: &Path) -> Result<String> {
     }
 }
 
+/// Run a binary directly with arguments, taking over the terminal.
+/// Bypasses the shell to avoid platform-specific quoting issues (e.g. Windows cmd.exe).
+/// Caller must suspend TUI before calling this.
+pub fn run_direct(bin: &str, args: &[&str], cwd: &Path) -> Result<()> {
+    let status = std::process::Command::new(bin)
+        .args(args)
+        .current_dir(cwd)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Command exited with status: {}", status))
+    }
+}
+
 /// Run a command that takes over the terminal (e.g. $EDITOR).
 /// Caller must suspend TUI before calling this.
 pub fn run_takeover(shell: &str, cmd: &str, cwd: &Path) -> Result<()> {
