@@ -25,6 +25,7 @@ impl StatusBar {
         filter: Option<&str>,
         status_message: Option<&str>,
         show_shortcut_hints: bool,
+        key_editor: Option<&str>,
         key_help: Option<&str>,
         key_quit: Option<&str>,
         key_settings: Option<&str>,
@@ -57,6 +58,10 @@ impl StatusBar {
         if show_shortcut_hints {
             let dim = Style::default().fg(fg).bg(bg);
             let key_style = Style::default().fg(accent).bg(bg);
+            if let Some(k) = key_editor {
+                left.push(Span::styled(format!(" [{}]:", k), key_style));
+                left.push(Span::styled("Edit", dim));
+            }
             if let Some(k) = key_help {
                 left.push(Span::styled(format!(" [{}]:", k), key_style));
                 left.push(Span::styled("Help", dim));

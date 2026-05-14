@@ -406,6 +406,7 @@ fn help_sections() -> Vec<(&'static str, Vec<(Action, &'static str)>)> {
             (OpenSettings, "Settings"),
             (OpenConfig, "Open config"),
             (OpenShell, "Open shell"),
+            (OpenEditor, "Open in editor"),
             (Quit, "Quit"),
         ]),
     ]
@@ -432,6 +433,7 @@ pub enum SettingId {
     FollowSymlinks,
     ScrollThreshold,
     Shell,
+    Editor,
     ShellMode,
     ConfirmDelete,
     TrashDir,
@@ -508,6 +510,7 @@ impl SettingsState {
                 TabItem::Setting(FollowSymlinks),
                 TabItem::Setting(ScrollThreshold),
                 TabItem::Setting(Shell),
+                TabItem::Setting(Editor),
                 TabItem::Setting(ShellMode),
                 TabItem::Setting(ConfirmDelete),
                 TabItem::Setting(TrashDir),
@@ -587,6 +590,7 @@ impl SettingsState {
                     TabItem::Section("App"),
                     TabItem::Setting(KeyAction(OpenConfig)),
                     TabItem::Setting(KeyAction(OpenShell)),
+                    TabItem::Setting(KeyAction(OpenEditor)),
                     TabItem::Setting(KeyAction(Quit)),
                     TabItem::Setting(KeyAction(Help)),
                     TabItem::Setting(KeyAction(OpenSettings)),
@@ -608,6 +612,7 @@ impl SettingsState {
             FollowSymlinks => yesno(self.config.general.follow_symlinks),
             ScrollThreshold => self.config.general.scroll_threshold.to_string(),
             Shell => self.config.general.shell.clone(),
+            Editor => self.config.general.editor.clone(),
             ShellMode => format!("{:?}", self.config.general.shell_mode).to_lowercase(),
             ConfirmDelete => yesno(self.config.general.confirm_delete),
             TrashDir => self.config.general.trash_dir
@@ -735,6 +740,7 @@ impl SettingsState {
         use SettingId::*;
         match id {
             Shell => self.config.general.shell = value.to_string(),
+            Editor => self.config.general.editor = value.to_string(),
             ScrollThreshold => {
                 if let Ok(n) = value.parse::<usize>() {
                     self.config.general.scroll_threshold = n;
@@ -988,6 +994,7 @@ fn id_label(id: &SettingId) -> &'static str {
         FollowSymlinks => "Follow symlinks",
         ScrollThreshold => "Scroll threshold",
         Shell => "Shell",
+        Editor => "Editor",
         ShellMode => "Shell mode",
         ConfirmDelete => "Confirm delete",
         TrashDir => "Trash dir",
@@ -1056,6 +1063,7 @@ fn id_label(id: &SettingId) -> &'static str {
                 Filter => "Filter",
                 ClearFilter => "Clear filter",
                 OpenConfig => "Open config",
+                OpenEditor => "Open in editor",
                 OpenShell => "Open shell",
                 OpenSettings => "Settings",
                 Quit => "Quit",
@@ -1172,7 +1180,7 @@ mod tests {
         let state = SettingsState::new(Config::default());
         let items = state.tab_items();
         assert!(matches!(items[0], TabItem::Setting(SettingId::Layout)));
-        assert_eq!(items.len(), 9);
+        assert_eq!(items.len(), 10);
     }
 
     #[test]
