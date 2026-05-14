@@ -50,6 +50,7 @@ pub enum Action {
 
     // App
     OpenConfig,
+    OpenEditor,
     OpenShell,
     OpenSettings,
     Quit,
@@ -136,6 +137,7 @@ impl Default for Keymap {
         m.insert("ctrl+t".into(),      KeyBinding::Shell("$SHELL".into()));
 
         // App
+        m.insert("e".into(),           KeyBinding::Action(Action::OpenEditor));
         m.insert("ctrl+.".into(),      KeyBinding::Action(Action::OpenSettings));
         m.insert("?".into(),           KeyBinding::Action(Action::Help));
         m.insert("q".into(),           KeyBinding::Action(Action::Quit));
@@ -160,11 +162,11 @@ mod tests {
         vec![
             MoveUp, MoveDown, MoveLeft, MoveRight,
             PageUp, PageDown, GotoTop, GotoBottom,
-            OpenEntry, GoParent,
+            OpenEntry, GoParent, SwitchPane,
             SelectToggle, SelectAll, SelectNone,
             Copy, Cut, Paste, Delete, Rename, NewFile, NewDir,
             ToggleHidden, TogglePreview, CycleLayout, Refresh, ToggleSidebar,
-            Search, Filter, OpenSettings, Quit, Help,
+            Search, Filter, OpenEditor, OpenSettings, Quit, Help,
         ]
     }
 
@@ -220,6 +222,6 @@ mod tests {
         let count: usize = km.0.values()
             .filter(|v| matches!(v, KeyBinding::Action(_)))
             .count();
-        assert!(count >= 27, "Expected at least 27 action bindings, got {}", count);
+        assert!(count >= 28, "Expected at least 28 action bindings, got {}", count);
     }
 }

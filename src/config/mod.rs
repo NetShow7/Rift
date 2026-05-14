@@ -78,6 +78,7 @@ pub struct GeneralConfig {
     pub follow_symlinks: bool,
     pub scroll_threshold: usize,
     pub shell: String,
+    pub editor: String,
     pub shell_mode: ShellMode,
     pub confirm_delete: bool,
     pub trash_dir: Option<PathBuf>,
@@ -92,6 +93,7 @@ impl Default for GeneralConfig {
             follow_symlinks: true,
             scroll_threshold: 3,
             shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
+            editor: std::env::var("EDITOR").unwrap_or_else(|_| "vim".into()),
             shell_mode: ShellMode::default(),
             confirm_delete: true,
             show_shortcut_hints: true,
@@ -164,6 +166,8 @@ mod tests {
         assert!(c.confirm_delete);
         assert!(c.show_shortcut_hints);
         assert_eq!(c.trash_dir, None);
+        let expected_editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+        assert_eq!(c.editor, expected_editor);
     }
 
     #[test]
@@ -190,6 +194,7 @@ mod tests {
         assert_eq!(c.general.follow_symlinks, c2.general.follow_symlinks);
         assert_eq!(c.general.scroll_threshold, c2.general.scroll_threshold);
         assert_eq!(c.general.shell_mode, c2.general.shell_mode);
+        assert_eq!(c.general.editor, c2.general.editor);
         assert_eq!(c.general.confirm_delete, c2.general.confirm_delete);
         assert_eq!(c.theme.border_style, c2.theme.border_style);
         assert_eq!(s.len(), s2.len());
