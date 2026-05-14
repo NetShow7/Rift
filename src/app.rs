@@ -63,6 +63,8 @@ pub struct App {
     pub preview_cache: PreviewCache,
     /// Transient one-line message shown in the status bar (auto-clears after 2 s).
     pub status_message: Option<(String, std::time::Instant)>,
+    /// Force a full terminal clear on next draw (used after editor/shell takeover).
+    pub needs_clear: bool,
 }
 
 /// Top-level input mode.
@@ -100,6 +102,7 @@ impl App {
             layout,
             show_preview: true,
             show_hidden,
+            needs_clear: false,
             primary,
             secondary: None,
             parent,
@@ -155,6 +158,10 @@ impl App {
 
             self.sidebar.tick();
 
+            if self.needs_clear {
+                terminal.clear()?;
+                self.needs_clear = false;
+            }
             terminal.draw(|frame| self.draw(frame))?;
 
             self.check_pending_paste()?;
@@ -536,6 +543,7 @@ impl App {
                         shell::run_takeover(&shell_bin, &cmd, &cwd).ok();
                         crossterm::terminal::enable_raw_mode()?;
                         crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+                        self.needs_clear = true;
                         self.refresh_primary()?;
                     }
                 }
@@ -573,6 +581,7 @@ impl App {
 
                 crossterm::terminal::enable_raw_mode()?;
                 crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+                self.needs_clear = true;
                 self.refresh_primary()?;
             }
             ShellMode::Capture => {
