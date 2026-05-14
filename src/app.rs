@@ -230,6 +230,7 @@ impl App {
         let status_msg = self.status_message.as_ref().map(|(m, _)| m.as_str());
         // Resolve shortcut hints
         let show_hints = self.config.general.show_shortcut_hints;
+        let key_editor = if show_hints { self.key_for_action(&Action::OpenEditor) } else { None };
         let key_help = if show_hints { self.key_for_action(&Action::Help) } else { None };
         let key_quit = if show_hints { self.key_for_action(&Action::Quit) } else { None };
         let key_settings = if show_hints { self.key_for_action(&Action::OpenSettings) } else { None };
@@ -246,6 +247,7 @@ impl App {
             filter.as_deref(),
             status_msg,
             show_hints,
+            key_editor.as_deref(),
             key_help.as_deref(),
             key_quit.as_deref(),
             key_settings.as_deref(),
@@ -519,6 +521,24 @@ impl App {
 
             Action::OpenShell => {
                 self.dispatch_shell("$SHELL")?;
+            }
+
+            Action::OpenEditor => {
+                if let Some(entry) = self.active_pane_mut().focused_entry().cloned() {
+                    if !entry.is_dir() {
+                        let path = entry.path;
+                        let quoted = format!("'{}'", path.to_string_lossy().replace('\'', r"'\''"));
+                        let cmd = format!("{} {}", self.config.general.editor, quoted);
+                        let cwd = self.primary.cwd.clone();
+                        let shell_bin = self.config.general.shell.clone();
+                        crossterm::terminal::disable_raw_mode()?;
+                        crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+                        shell::run_takeover(&shell_bin, &cmd, &cwd).ok();
+                        crossterm::terminal::enable_raw_mode()?;
+                        crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+                        self.refresh_primary()?;
+                    }
+                }
             }
 
             Action::InvertSelection => {
