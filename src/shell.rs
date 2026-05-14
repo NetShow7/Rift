@@ -2,6 +2,37 @@ use anyhow::Result;
 use std::path::Path;
 use std::process::Stdio;
 
+/// Split a command string into binary path and argument list.
+/// Supports simple quoted strings for args that contain spaces.
+pub fn split_command(cmd: &str) -> (String, Vec<String>) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quote = false;
+
+    for c in cmd.chars() {
+        match c {
+            '\'' => in_quote = !in_quote,
+            ' ' if !in_quote => {
+                if !current.is_empty() {
+                    parts.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+
+    if parts.is_empty() {
+        (String::new(), vec![])
+    } else {
+        let bin = parts.remove(0);
+        (bin, parts)
+    }
+}
+
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
@@ -112,5 +143,54 @@ mod tests {
     fn expand_command_empty_template() {
         let result = expand_command("", Some(Path::new("/path")));
         assert_eq!(result, "");
+    }
+
+    #[test]
+    fn split_command_bare_binary() {
+        let (bin, args) = split_command("vim");
+        assert_eq!(bin, "vim");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn split_command_binary_with_args() {
+        let (bin, args) = split_command("code --wait");
+        assert_eq!(bin, "code");
+        assert_eq!(args, vec!["--wait"]);
+    }
+
+    #[test]
+    fn split_command_multiple_args() {
+        let (bin, args) = split_command("subl -n --wait");
+        assert_eq!(bin, "subl");
+        assert_eq!(args, vec!["-n", "--wait"]);
+    }
+
+    #[test]
+    fn split_command_quoted_arg() {
+        let (bin, args) = split_command("my-editor '--some flag'");
+        assert_eq!(bin, "my-editor");
+        assert_eq!(args, vec!["--some flag"]);
+    }
+
+    #[test]
+    fn split_command_empty() {
+        let (bin, args) = split_command("");
+        assert!(bin.is_empty());
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn split_command_path_with_spaces_quoted() {
+        let (bin, args) = split_command("'/usr/bin/my editor' --flag");
+        assert_eq!(bin, "/usr/bin/my editor");
+        assert_eq!(args, vec!["--flag"]);
+    }
+
+    #[test]
+    fn split_command_trailing_whitespace() {
+        let (bin, args) = split_command("code   ");
+        assert_eq!(bin, "code");
+        assert!(args.is_empty());
     }
 }

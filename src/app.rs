@@ -15,7 +15,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
     collections::HashMap,
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{mpsc, Arc},
     thread,
     time::Duration,
@@ -532,18 +532,33 @@ impl App {
 
             Action::OpenEditor => {
                 if let Some(entry) = self.active_pane_mut().focused_entry().cloned() {
-                    if !entry.is_dir() {
-                        let path_str = entry.path.to_string_lossy().to_string();
-                        let cwd = self.primary.cwd.clone();
-                        let editor = self.config.general.editor.clone();
-                        crossterm::terminal::disable_raw_mode()?;
-                        crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
-                        shell::run_direct(&editor, &[&path_str], &cwd).ok();
-                        crossterm::terminal::enable_raw_mode()?;
-                        crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
-                        self.needs_clear = true;
-                        self.refresh_primary()?;
+                    let path_str = entry.path.to_string_lossy().to_string();
+                    let cwd = self.primary.cwd.clone();
+                    let editor = self.config.general.editor.clone();
+
+                    let (bin, mut base_args) = shell::split_command(&editor);
+
+                    // Auto-add --wait for VSCode to prevent flicker — code CLI
+                    // returns immediately unless told to wait, causing the TUI
+                    // suspend/resume cycle to flash the terminal briefly.
+                    let bin_name = Path::new(&bin)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&bin);
+                    if bin_name == "code" && !base_args.iter().any(|a| a == "--wait" || a == "-w") {
+                        base_args.push("--wait".to_string());
                     }
+
+                    let mut all_args: Vec<&str> = base_args.iter().map(|s| s.as_str()).collect();
+                    all_args.push(&path_str);
+
+                    crossterm::terminal::disable_raw_mode()?;
+                    crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+                    shell::run_direct(&bin, &all_args, &cwd).ok();
+                    crossterm::terminal::enable_raw_mode()?;
+                    crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+                    self.needs_clear = true;
+                    self.refresh_primary()?;
                 }
             }
 
