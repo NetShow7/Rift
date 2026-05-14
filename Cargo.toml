@@ -21,6 +21,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 humansize = "2"
 unicode-width = "0.1"
 indexmap = "=2.2.6"
+syntect = { version = "5.3.0", features = ["default-fancy"] }
 
 [dev-dependencies]
 tempfile = "3"
