@@ -1,6 +1,6 @@
 use crate::{
         config::{Action, Config, KeyBinding, LayoutMode, ShellMode},
-    fs::{self, mounts, read_dir, Conflict, ConflictResolution, OpResult},
+    fs::{self, mounts, read_dir, Conflict, ConflictResolution, FsWatcher, OpResult},
     input::key_to_string,
     shell,
     ui::{
@@ -13,7 +13,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     sync::{mpsc, Arc},
@@ -60,6 +60,7 @@ pub struct App {
     pub sidebar: SidebarState,
     pub sidebar_focused: bool,
     pub rt: tokio::runtime::Runtime,
+    pub fs_watcher: Option<FsWatcher>,
     pub preview_cache: PreviewCache,
     /// Transient one-line message shown in the status bar (auto-clears after 2 s).
     pub status_message: Option<(String, std::time::Instant)>,
@@ -98,7 +99,7 @@ impl App {
         sidebar.favorites = config.sidebar.favorites.clone();
         sidebar.drives = mounts::get_physical_mounts();
 
-        Ok(Self {
+        let mut app = Self {
             layout,
             show_preview: true,
             show_hidden,
@@ -116,9 +117,12 @@ impl App {
             sidebar_focused: false,
             config,
             rt,
+            fs_watcher: None,
             preview_cache: PreviewCache::new(),
             status_message: None,
-        })
+        };
+        app.sync_watches();
+        Ok(app)
     }
 
     /// Return a mutable reference to whichever pane is currently active.
@@ -146,8 +150,9 @@ impl App {
                 self.primary.focused_entry().cloned()
             };
             if self.preview_cache.needs_refresh(focused.as_ref()) {
-                self.preview_cache.load(focused.as_ref());
+                self.preview_cache.start_load(focused.as_ref());
             }
+            self.preview_cache.check_completion();
 
             // Expire transient status messages after 2 seconds
             if let Some((_, ts)) = &self.status_message {
@@ -165,6 +170,44 @@ impl App {
             terminal.draw(|frame| self.draw(frame))?;
 
             self.check_pending_paste()?;
+
+            let changes: Vec<PathBuf> = self
+                .fs_watcher
+                .as_mut()
+                .map_or_else(Vec::new, |w| {
+                    let mut buf = Vec::new();
+                    loop {
+                        match w.rx.try_recv() {
+                            Ok(p) => buf.push(p),
+                            Err(_) => break,
+                        }
+                    }
+                    buf
+                });
+            for changed_path in &changes {
+                if changed_path.starts_with(&self.primary.cwd) {
+                    self.refresh_primary()?;
+                }
+                if let Some(ref mut secondary) = self.secondary {
+                    if changed_path.starts_with(&secondary.cwd) {
+                        if let Ok(entries) = read_dir(&secondary.cwd, self.show_hidden) {
+                            let cursor = secondary.cursor;
+                            secondary.entries = entries;
+                            secondary.cursor = cursor.min(secondary.entries.len().saturating_sub(1));
+                            secondary.list_state.select(Some(secondary.cursor));
+                        }
+                    }
+                }
+                if matches!(self.layout, LayoutMode::Miller) {
+                    if let Some(ref mut parent) = self.parent {
+                        if changed_path.starts_with(&parent.cwd) {
+                            if let Ok(entries) = read_dir(&parent.cwd, self.show_hidden) {
+                                parent.entries = entries;
+                            }
+                        }
+                    }
+                }
+            }
 
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
@@ -764,6 +807,7 @@ impl App {
         }
 
         self.refresh_primary()?;
+        self.sync_watches();
         Ok(())
     }
 
@@ -1137,6 +1181,7 @@ impl App {
             }
         }
 
+        self.sync_watches();
         Ok(())
     }
 
@@ -1170,7 +1215,58 @@ impl App {
                 self.parent = None;
             }
         }
+        self.sync_watches();
         Ok(())
+    }
+
+    fn sync_watches(&mut self) {
+        let mut desired = HashSet::new();
+        desired.insert(self.primary.cwd.clone());
+
+        match self.layout {
+            LayoutMode::Dual => {
+                if let Some(ref secondary) = self.secondary {
+                    desired.insert(secondary.cwd.clone());
+                }
+            }
+            LayoutMode::Miller => {
+                if let Some(parent_path) = self.primary.cwd.parent() {
+                    desired.insert(parent_path.to_path_buf());
+                }
+            }
+            LayoutMode::Single => {}
+        }
+
+        if self.fs_watcher.is_none() {
+            match FsWatcher::new() {
+                Ok(w) => self.fs_watcher = Some(w),
+                Err(_) => {
+                    self.status_message = Some((
+                        "Filesystem watching unavailable".into(),
+                        std::time::Instant::now(),
+                    ));
+                    return;
+                }
+            }
+        }
+
+        let watcher = self.fs_watcher.as_mut().unwrap();
+
+        for path in &desired {
+            if let Err(e) = watcher.add_watch(path) {
+                self.status_message = Some((
+                    format!("Could not watch {}: {}", path.display(), e),
+                    std::time::Instant::now(),
+                ));
+            }
+        }
+
+        let current_watched = watcher.watched.clone();
+        for path in &current_watched {
+            if !desired.contains(path) {
+                watcher.remove_watch(path);
+            }
+        }
     }
 }
 
