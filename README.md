@@ -1,3 +1,5 @@
+[![Rust](https://github.com/NetShow7/Rift/actions/workflows/rust.yml/badge.svg)](https://github.com/NetShow7/Rift/actions/workflows/rust.yml)
+
 # Rift
 
 Modern terminal file manager built with Rust (ratatui + crossterm).
