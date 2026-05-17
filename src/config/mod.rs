@@ -199,4 +199,38 @@ mod tests {
         assert_eq!(c.theme.border_style, c2.theme.border_style);
         assert_eq!(s.len(), s2.len());
     }
+
+    #[test]
+    fn config_load_with_preset() {
+        let toml_str = r#"
+[theme]
+preset = "nord"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.theme.preset, super::theme::ThemePreset::Nord);
+    }
+
+    #[test]
+    fn config_load_without_preset() {
+        let toml_str = r##"
+[theme.colors]
+foreground = "#ff0000"
+"##;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.theme.preset, super::theme::ThemePreset::Custom);
+    }
+
+    #[test]
+    fn config_roundtrip_with_preset() {
+        let toml_str = r#"
+[theme]
+preset = "nord"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.theme.preset, super::theme::ThemePreset::Nord);
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let config2: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(config2.theme.preset, super::theme::ThemePreset::Nord);
+    }
 }

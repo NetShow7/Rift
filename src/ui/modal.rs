@@ -1,4 +1,4 @@
-use crate::config::{Action, Config, KeyBinding, Keymap, LayoutMode, ShellMode, theme::{BorderStyle, Color as RiftColor}};
+use crate::config::{Action, Config, KeyBinding, Keymap, LayoutMode, ShellMode, theme::{BorderStyle, Color as RiftColor, ThemePreset}};
 use crate::fs::{Conflict, ConflictResolution};
 use std::sync::mpsc::Sender;
 use ratatui::{
@@ -438,6 +438,7 @@ pub enum SettingId {
     ConfirmDelete,
     TrashDir,
     ShowShortcutHints,
+    ThemePreset,
     BorderStyle,
     ColorBackground,
     ColorForeground,
@@ -517,6 +518,7 @@ impl SettingsState {
                 TabItem::Setting(ShowShortcutHints),
             ],
             SettingsTab::Theme => vec![
+                TabItem::Setting(ThemePreset),
                 TabItem::Setting(BorderStyle),
                 TabItem::Section("Colors"),
                 TabItem::Setting(ColorForeground),
@@ -619,6 +621,7 @@ impl SettingsState {
                 .as_ref().map(|p| p.display().to_string())
                 .unwrap_or_else(|| "none".into()),
             ShowShortcutHints => yesno(self.config.general.show_shortcut_hints),
+            ThemePreset => self.config.theme.preset.display_name().to_string(),
             BorderStyle => format!("{:?}", self.config.theme.border_style).to_lowercase(),
             ColorForeground => color_val(&self.config.theme.colors.foreground),
             ColorBackground => color_val(&self.config.theme.colors.background),
@@ -671,7 +674,7 @@ impl SettingsState {
             ShowHidden | FollowSymlinks | ConfirmDelete | ShowShortcutHints => {
                 self.toggle_bool(id);
             }
-            Layout | ShellMode | BorderStyle => {
+            Layout | ShellMode | BorderStyle | ThemePreset => {
                 self.cycle_enum(id);
             }
             KeyAction(_) => {
@@ -724,6 +727,26 @@ impl SettingsState {
                     BorderStyle::None => BorderStyle::Plain,
                 };
             }
+            SettingId::ThemePreset => {
+                let old = self.config.theme.preset.clone();
+                self.config.theme.preset = match old {
+                    ThemePreset::Custom => ThemePreset::TokyoNight,
+                    ThemePreset::TokyoNight => ThemePreset::CatppuccinMocha,
+                    ThemePreset::CatppuccinMocha => ThemePreset::CatppuccinLatte,
+                    ThemePreset::CatppuccinLatte => ThemePreset::Dracula,
+                    ThemePreset::Dracula => ThemePreset::EverforestDark,
+                    ThemePreset::EverforestDark => ThemePreset::EverforestLight,
+                    ThemePreset::EverforestLight => ThemePreset::Nord,
+                    ThemePreset::Nord => ThemePreset::SolarizedDark,
+                    ThemePreset::SolarizedDark => ThemePreset::SolarizedLight,
+                    ThemePreset::SolarizedLight => ThemePreset::GruvboxDark,
+                    ThemePreset::GruvboxDark => ThemePreset::GruvboxLight,
+                    ThemePreset::GruvboxLight => ThemePreset::Custom,
+                };
+                if self.config.theme.preset != ThemePreset::Custom {
+                    self.config.theme.apply_preset(self.config.theme.preset.clone());
+                }
+            }
             _ => {}
         }
     }
@@ -756,6 +779,7 @@ impl SettingsState {
             _ => {
                 if let Some(c) = self.id_to_color(id) {
                     *c = parse_color(value);
+                    self.config.theme.preset = crate::config::theme::ThemePreset::Custom;
                 } else if let Some(s) = self.id_to_symbol(id) {
                     *s = value.to_string();
                 }
@@ -999,6 +1023,7 @@ fn id_label(id: &SettingId) -> &'static str {
         ConfirmDelete => "Confirm delete",
         TrashDir => "Trash dir",
         ShowShortcutHints => "Show shortcut hints",
+        ThemePreset => "Preset",
         BorderStyle => "Border style",
         ColorForeground => "  Foreground",
         ColorBackground => "  Background",
@@ -1433,5 +1458,71 @@ mod tests {
     fn parse_color_named() {
         let c = super::parse_color("red");
         assert!(matches!(c, super::RiftColor::Named(s) if s == "red"));
+    }
+
+    #[test]
+    fn settings_theme_tab_preset_is_first() {
+        let mut state = SettingsState::new(Config::default());
+        state.tab = SettingsTab::Theme;
+        let items = state.tab_items();
+        assert!(matches!(
+            items[0],
+            TabItem::Setting(SettingId::ThemePreset)
+        ));
+        assert_eq!(state.value_for(&SettingId::ThemePreset), "Tokyo Night");
+    }
+
+    #[test]
+    fn settings_cycle_theme_preset_through_all() {
+        let mut state = SettingsState::new(Config::default());
+        assert_eq!(
+            state.config.theme.preset,
+            super::ThemePreset::TokyoNight,
+            "Default config has TokyoNight preset",
+        );
+
+        let expected_order = [
+            super::ThemePreset::CatppuccinMocha,
+            super::ThemePreset::CatppuccinLatte,
+            super::ThemePreset::Dracula,
+            super::ThemePreset::EverforestDark,
+            super::ThemePreset::EverforestLight,
+            super::ThemePreset::Nord,
+            super::ThemePreset::SolarizedDark,
+            super::ThemePreset::SolarizedLight,
+            super::ThemePreset::GruvboxDark,
+            super::ThemePreset::GruvboxLight,
+            super::ThemePreset::Custom,
+            super::ThemePreset::TokyoNight,
+        ];
+
+        for exp in &expected_order {
+            state.cycle_enum(&SettingId::ThemePreset);
+            assert_eq!(state.config.theme.preset, *exp);
+        }
+
+        state.cycle_enum(&SettingId::ThemePreset);
+        assert_eq!(
+            state.config.theme.preset,
+            super::ThemePreset::CatppuccinMocha,
+        );
+    }
+
+    #[test]
+    fn settings_preset_then_edit_color_shows_custom() {
+        let mut state = SettingsState::new(Config::default());
+        assert_eq!(state.config.theme.preset, super::ThemePreset::TokyoNight);
+
+        for _ in 0..6 {
+            state.cycle_enum(&SettingId::ThemePreset);
+        }
+        assert_eq!(state.config.theme.preset, super::ThemePreset::Nord);
+
+        state.apply_value(&SettingId::ColorForeground, "#ff0000");
+        assert_eq!(state.config.theme.preset, super::ThemePreset::Custom);
+        assert!(matches!(
+            state.config.theme.colors.foreground,
+            super::RiftColor::Hex(s) if s == "#ff0000"
+        ));
     }
 }
