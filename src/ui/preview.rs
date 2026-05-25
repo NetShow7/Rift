@@ -132,7 +132,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                draw_preview(frame, frame.size(), &cache);
+                draw_preview(frame, frame.size(), &cache, &crate::config::Theme::default());
             })
             .unwrap();
 
@@ -157,7 +157,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                draw_preview(frame, frame.size(), &cache);
+                draw_preview(frame, frame.size(), &cache, &crate::config::Theme::default());
             })
             .unwrap();
 
@@ -184,7 +184,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                draw_preview(frame, frame.size(), &cache);
+                draw_preview(frame, frame.size(), &cache, &crate::config::Theme::default());
             })
             .unwrap();
 
@@ -273,18 +273,30 @@ fn load_content_for_file(path: &std::path::PathBuf) -> PreviewContent {
     }
 }
 
-pub fn draw_preview(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, cache: &PreviewCache) {
+pub fn draw_preview(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, cache: &PreviewCache, theme: &crate::config::Theme) {
     use ratatui::{
         style::{Color, Style},
         text::{Line, Span},
-        widgets::{Block, BorderType, Paragraph},
+        widgets::{Block, BorderType, Borders, Paragraph},
     };
     use crate::ui::syntax_highlighter;
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
+    let border_color = theme.colors.border_inactive.to_ratatui();
+    let border_type = match theme.border_style {
+        crate::config::theme::BorderStyle::Rounded => BorderType::Rounded,
+        crate::config::theme::BorderStyle::Double  => BorderType::Double,
+        crate::config::theme::BorderStyle::Thick   => BorderType::Thick,
+        crate::config::theme::BorderStyle::Plain   => BorderType::Plain,
+        crate::config::theme::BorderStyle::None    => BorderType::Plain,
+    };
+
+    // No left border — the adjacent pane's right border serves as the divider,
+    // avoiding a doubled-border glitch where both panels draw the shared edge.
+    let block = Block::new()
+        .borders(Borders::TOP | Borders::RIGHT | Borders::BOTTOM)
+        .border_type(border_type)
         .title(" Preview ")
-        .style(Style::default().fg(Color::Rgb(65, 72, 104)));
+        .style(Style::default().fg(border_color));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);

@@ -230,11 +230,14 @@ impl App {
         };
         let layout_areas = compute_layout(area, &self.layout, self.show_preview, effective_sidebar_width, &self.config.sidebar.position);
 
-        // Draw parent pane (Miller left column)
+        let sidebar_on_left = self.config.sidebar.position == crate::config::SidebarPosition::Left;
+        let has_left_sidebar = sidebar_on_left && effective_sidebar_width > 0;
+
+        // Draw parent pane (Miller left column): leftmost pane, drop left only if sidebar is on left
         if let (Some(parent), Some(parent_area)) = (&mut self.parent, layout_areas.panes.first().copied()) {
             if matches!(self.layout, LayoutMode::Miller) && layout_areas.panes.len() >= 2 {
                 parent.is_active = false;
-                parent.draw(frame, parent_area, &self.config.theme, "Parent");
+                parent.draw(frame, parent_area, &self.config.theme, "Parent", has_left_sidebar);
             }
         }
 
@@ -246,22 +249,25 @@ impl App {
             layout_areas.panes[0]
         };
 
+        // In Miller, parent is always to the left; in Single/Dual, only drop left if sidebar is on left
+        let primary_drop_left = matches!(self.layout, LayoutMode::Miller) || has_left_sidebar;
+
         self.primary.is_active = self.active_pane == 0 && !sidebar_focused;
         let cwd_title = self.primary.cwd.display().to_string();
-        self.primary.draw(frame, primary_area, &self.config.theme, &cwd_title);
+        self.primary.draw(frame, primary_area, &self.config.theme, &cwd_title, primary_drop_left);
 
-        // Draw secondary pane (Dual)
+        // Draw secondary pane (Dual): primary is always to its left
         if let (Some(secondary), Some(sec_area)) = (&mut self.secondary, layout_areas.panes.get(1).copied()) {
             if matches!(self.layout, LayoutMode::Dual) {
                 secondary.is_active = self.active_pane == 1 && !sidebar_focused;
                 let sec_title = secondary.cwd.display().to_string();
-                secondary.draw(frame, sec_area, &self.config.theme, &sec_title);
+                secondary.draw(frame, sec_area, &self.config.theme, &sec_title, true);
             }
         }
 
         // Draw preview
         if let Some(preview_area) = layout_areas.preview {
-            draw_preview(frame, preview_area, &self.preview_cache);
+            draw_preview(frame, preview_area, &self.preview_cache, &self.config.theme);
         }
 
         // Draw status bar — use active pane for focused entry and selection count
@@ -306,7 +312,7 @@ impl App {
         // Draw sidebar or collapsed indicator
         if let Some(sidebar_area) = layout_areas.sidebar {
             if sidebar_width > 0 || self.sidebar.is_animating() {
-                crate::ui::sidebar::render_sidebar(frame, sidebar_area, &self.sidebar, &self.config.theme);
+                crate::ui::sidebar::render_sidebar(frame, sidebar_area, &self.sidebar, &self.config.theme, !sidebar_on_left);
             } else {
                 let toggle_key = self.key_for_action(&Action::ToggleSidebar);
                 crate::ui::sidebar::render_collapsed_indicator(

@@ -6,7 +6,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, List, ListItem, ListState},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState},
     Frame,
 };
 use std::collections::HashSet;
@@ -131,7 +131,7 @@ impl Pane {
         }
     }
 
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect, theme: &Theme, title: &str) {
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect, theme: &Theme, title: &str, drop_left: bool) {
         let border_color = if self.is_active {
             theme.colors.border_active.to_ratatui()
         } else {
@@ -146,7 +146,9 @@ impl Pane {
             crate::config::theme::BorderStyle::None     => BorderType::Plain,
         };
 
-        let block = Block::bordered()
+        let borders = if drop_left { Borders::TOP | Borders::RIGHT | Borders::BOTTOM } else { Borders::ALL };
+        let block = Block::new()
+            .borders(borders)
             .border_type(border_type)
             .title(format!(" {} ", title))
             .style(Style::default().fg(border_color));

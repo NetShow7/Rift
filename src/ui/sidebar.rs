@@ -255,7 +255,7 @@ use ratatui::{
 use crate::config::theme::Theme;
 
 /// Render the sidebar into the given area.
-pub fn render_sidebar(frame: &mut Frame, area: Rect, state: &SidebarState, theme: &Theme) {
+pub fn render_sidebar(frame: &mut Frame, area: Rect, state: &SidebarState, theme: &Theme, drop_left: bool) {
     let width = state.current_width();
 
     // If fully closed and nothing animating: draw nothing
@@ -300,6 +300,7 @@ pub fn render_sidebar(frame: &mut Frame, area: Rect, state: &SidebarState, theme
         bg,
         fg,
         width,
+        drop_left,
     );
 
     let drive_len = state.drives.len();
@@ -317,6 +318,7 @@ pub fn render_sidebar(frame: &mut Frame, area: Rect, state: &SidebarState, theme
         bg,
         fg,
         width,
+        drop_left,
     );
 }
 
@@ -334,16 +336,26 @@ fn render_sidebar_section(
     bg: ratatui::style::Color,
     fg: ratatui::style::Color,
     width: u16,
+    drop_left: bool,
 ) {
     let sel_bg = theme.colors.selection_bg.to_ratatui();
     let sel_fg = theme.colors.selection_fg.to_ratatui();
     let dir_color = theme.colors.directory.to_ratatui();
 
+    let border_type = match theme.border_style {
+        crate::config::theme::BorderStyle::Rounded => BorderType::Rounded,
+        crate::config::theme::BorderStyle::Double  => BorderType::Double,
+        crate::config::theme::BorderStyle::Thick   => BorderType::Thick,
+        crate::config::theme::BorderStyle::Plain   => BorderType::Plain,
+        crate::config::theme::BorderStyle::None    => BorderType::Plain,
+    };
+    let borders = if drop_left { Borders::TOP | Borders::RIGHT | Borders::BOTTOM } else { Borders::ALL };
+
     let block = Block::default()
         .title(title)
         .title_style(Style::default().fg(dir_color))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(borders)
+        .border_type(border_type)
         .border_style(Style::default().fg(border_color))
         .bg(bg);
 
